@@ -76,7 +76,7 @@ export const Auth = () => {
             {mode === "login" ? "👋 ברוך הבא" : mode === "signup" ? "🚀 צור חשבון" : "🔑 שחזור סיסמא"}
           </h2>
           <p className="text-sm text-muted-foreground mb-6">
-            {mode === "login" ? "התחבר כדי להמשיך" : mode === "signup" ? "התחל לעקוב אחרי שעות העבודה שלך" : "הזן מייל וסיסמא חדשה"}
+            {mode === "login" ? "התחברו עכשיו כדי לעקוב אחרי השעות שלכם." : mode === "signup" ? "התחל לעקוב אחרי שעות העבודה שלך" : "הזן מייל וסיסמא חדשה"}
           </p>
 
           {mode === "forgot" ? (
