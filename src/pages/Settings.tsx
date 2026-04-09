@@ -9,7 +9,7 @@ import { ArrowLeft, Save, Download, RotateCcw, Upload } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import jsPDF from "jspdf";
 import { format } from "date-fns";
-import { exportLocalBackup, getSettings, getWorkHoursForMonth, importLocalBackup, LocalBackupFile, saveSettings } from "@/lib/localData";
+import { exportLocalBackup, getSettings, getWorkHoursForMonth, importLocalBackup, LocalBackupFile, replaceCurrentUserData, saveSettings, UserSettings, WorkHour } from "@/lib/localData";
 import { isLocalAuthenticated } from "@/lib/localAuth";
 
 const daysOfWeek = [
@@ -37,7 +37,14 @@ export default function Settings() {
   const [exportYear, setExportYear] = useState(new Date().getFullYear());
   const [exporting, setExporting] = useState(false);
   const [backupLoading, setBackupLoading] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
   const restoreInputRef = useRef<HTMLInputElement>(null);
+  const importWorkHoursRef = useRef<HTMLInputElement>(null);
+  const importSettingsRef = useRef<HTMLInputElement>(null);
+  const importProfilesRef = useRef<HTMLInputElement>(null);
+  const [workHoursFile, setWorkHoursFile] = useState<File | null>(null);
+  const [settingsFile, setSettingsFile] = useState<File | null>(null);
+  const [profilesFile, setProfilesFile] = useState<File | null>(null);
 
   useEffect(() => {
     if (!isLocalAuthenticated()) {
@@ -155,6 +162,130 @@ export default function Settings() {
     } finally {
       setBackupLoading(false);
       if (restoreInputRef.current) restoreInputRef.current.value = "";
+    }
+  };
+
+  const parseCsv = (text: string): string[][] => {
+    const lines = text.replace(/\r\n/g, "\n").split("\n").filter(Boolean);
+    return lines.map((line) => {
+      const cells: string[] = [];
+      let current = "";
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i += 1) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQuotes && line[i + 1] === '"') {
+            current += '"';
+            i += 1;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (ch === ";" && !inQuotes) {
+          cells.push(current);
+          current = "";
+        } else {
+          current += ch;
+        }
+      }
+      cells.push(current);
+      return cells;
+    });
+  };
+
+  const parseJsonCell = <T,>(value: string, fallback: T): T => {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  };
+
+  const normalizeTime = (value: string) => (value ? value.slice(0, 5) : null);
+
+  const handleImportFromLovableCsv = async () => {
+    if (!workHoursFile || !settingsFile || !profilesFile) {
+      toast.error("צריך לבחור את שלושת קבצי ה-CSV");
+      return;
+    }
+    setImportLoading(true);
+    try {
+      const [workText, settingsText, profilesText] = await Promise.all([
+        workHoursFile.text(),
+        settingsFile.text(),
+        profilesFile.text(),
+      ]);
+
+      const workRows = parseCsv(workText);
+      const settingsRows = parseCsv(settingsText);
+      const profilesRows = parseCsv(profilesText);
+
+      const workHeader = workRows[0];
+      const settingsHeader = settingsRows[0];
+      const profilesHeader = profilesRows[0];
+
+      const idx = (header: string[], name: string) => header.indexOf(name);
+
+      const workUserIdIndex = idx(workHeader, "user_id");
+      const dateIndex = idx(workHeader, "date");
+      const hoursIndex = idx(workHeader, "hours_worked");
+      const startIndex = idx(workHeader, "start_time");
+      const endIndex = idx(workHeader, "end_time");
+      const statusIndex = idx(workHeader, "status");
+
+      const counts: Record<string, number> = {};
+      workRows.slice(1).forEach((row) => {
+        const uid = row[workUserIdIndex];
+        if (uid) counts[uid] = (counts[uid] || 0) + 1;
+      });
+      const selectedUserId = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (!selectedUserId) throw new Error("לא נמצא user_id בקובץ שעות");
+
+      const workHours: WorkHour[] = workRows
+        .slice(1)
+        .filter((row) => row[workUserIdIndex] === selectedUserId)
+        .map((row) => ({
+          date: row[dateIndex],
+          hours_worked: Number(row[hoursIndex] || 0),
+          start_time: normalizeTime(row[startIndex] || ""),
+          end_time: normalizeTime(row[endIndex] || ""),
+          status: row[statusIndex] || "worked",
+        }));
+
+      const settingsUserIdIndex = idx(settingsHeader, "user_id");
+      const workDaysIndex = idx(settingsHeader, "work_days");
+      const hoursPerDayIndex = idx(settingsHeader, "hours_per_day");
+
+      const selectedSettingsRow =
+        settingsRows.slice(1).find((row) => row[settingsUserIdIndex] === selectedUserId) ??
+        settingsRows[1];
+      const importedSettings: UserSettings = selectedSettingsRow
+        ? {
+            work_days: parseJsonCell<Record<string, boolean>>(selectedSettingsRow[workDaysIndex], workDays),
+            hours_per_day: parseJsonCell<Record<string, number>>(selectedSettingsRow[hoursPerDayIndex], hoursPerDay),
+            hourly_rate: hourlyRate,
+          }
+        : { work_days: workDays, hours_per_day: hoursPerDay, hourly_rate: hourlyRate };
+
+      const profileUserIdIndex = idx(profilesHeader, "user_id");
+      const firstNameIndex = idx(profilesHeader, "first_name");
+      const selectedProfileRow =
+        profilesRows.slice(1).find((row) => row[profileUserIdIndex] === selectedUserId) ??
+        profilesRows[1];
+      const firstName = selectedProfileRow?.[firstNameIndex] || "WorkTrack";
+
+      replaceCurrentUserData({
+        settings: importedSettings,
+        workHours,
+        firstName,
+      });
+      setWorkDays(importedSettings.work_days);
+      setHoursPerDay(importedSettings.hours_per_day);
+      setHourlyRate(importedSettings.hourly_rate);
+      toast.success(`יובאו ${workHours.length} רשומות מהגיבוי של Lovable`);
+    } catch {
+      toast.error("שגיאה בייבוא קבצי CSV");
+    } finally {
+      setImportLoading(false);
     }
   };
 
@@ -300,6 +431,54 @@ export default function Settings() {
               const file = e.target.files?.[0];
               if (file) void handleRestoreBackup(file);
             }}
+          />
+        </div>
+
+        <div className="bg-card rounded-3xl p-5 shadow-sm border border-border/50">
+          <h2 className="text-lg font-bold mb-2">📥 ייבוא מ-Lovable CSV</h2>
+          <p className="text-sm text-muted-foreground mb-4">
+            בחר את שלושת קבצי ה-CSV שייצאת, והמערכת תייבא את הנתונים למשתמש הנוכחי.
+          </p>
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <Button variant="outline" onClick={() => importWorkHoursRef.current?.click()} className="rounded-xl">
+                {workHoursFile ? "✅ work_hours נבחר" : "בחר work_hours CSV"}
+              </Button>
+              <Button variant="outline" onClick={() => importSettingsRef.current?.click()} className="rounded-xl">
+                {settingsFile ? "✅ user_settings נבחר" : "בחר user_settings CSV"}
+              </Button>
+            </div>
+            <Button variant="outline" onClick={() => importProfilesRef.current?.click()} className="rounded-xl w-full">
+              {profilesFile ? "✅ profiles נבחר" : "בחר profiles CSV"}
+            </Button>
+            <Button
+              onClick={handleImportFromLovableCsv}
+              disabled={importLoading}
+              className="w-full rounded-2xl bg-gradient-to-r from-primary to-secondary h-11 font-semibold"
+            >
+              {importLoading ? "מייבא..." : "ייבא עכשיו ללוקאלי"}
+            </Button>
+          </div>
+          <input
+            ref={importWorkHoursRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(e) => setWorkHoursFile(e.target.files?.[0] ?? null)}
+          />
+          <input
+            ref={importSettingsRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(e) => setSettingsFile(e.target.files?.[0] ?? null)}
+          />
+          <input
+            ref={importProfilesRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(e) => setProfilesFile(e.target.files?.[0] ?? null)}
           />
         </div>
 
