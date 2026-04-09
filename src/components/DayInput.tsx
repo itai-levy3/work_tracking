@@ -2,10 +2,10 @@ import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { RotateCcw, Clock, Briefcase, Heart, Palmtree, Flag, XCircle } from "lucide-react";
+import { deleteWorkHourByDate, upsertWorkHour } from "@/lib/localData";
 
 interface DayInputProps {
   date: Date;
@@ -37,31 +37,25 @@ export const DayInput = ({ date, startTime, endTime, status = 'worked', onHoursU
 
   const saveToDatabase = async (startValue: string, endValue: string, statusValue?: string) => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
       const dateStr = format(date, 'yyyy-MM-dd');
       const hours = calculateHours(startValue, endValue);
-      const { error } = await supabase.from("work_hours").upsert({
-        user_id: user.id, date: dateStr,
+      upsertWorkHour({
+        date: dateStr,
         start_time: startValue || null, end_time: endValue || null,
         hours_worked: hours, status: statusValue || dayStatus,
-      }, { onConflict: 'user_id,date' });
-      if (error) throw error;
+      });
       onHoursUpdate();
-    } catch (error: any) {
+    } catch {
       toast.error("שגיאה בשמירה");
     }
   };
 
   const handleReset = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { error } = await supabase.from("work_hours").delete().eq("user_id", user.id).eq("date", format(date, 'yyyy-MM-dd'));
-      if (error) throw error;
+      deleteWorkHourByDate(format(date, 'yyyy-MM-dd'));
       setStart(""); setEnd(""); setDayStatus("worked");
       onHoursUpdate();
-    } catch (error: any) {
+    } catch {
       toast.error("שגיאה באיפוס");
     }
   };

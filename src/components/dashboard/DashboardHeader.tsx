@@ -1,25 +1,18 @@
 import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
-import { Settings, LogOut, Sun, Moon, Sunrise, Zap } from "lucide-react";
+import { LogOut, Settings, Sun, Moon, Sunrise } from "lucide-react";
+import { getProfileFirstName } from "@/lib/localData";
 
 interface DashboardHeaderProps {
-  onSignOut: () => void;
   onSettings: () => void;
+  onSignOut: () => void;
 }
 
-export const DashboardHeader = ({ onSignOut, onSettings }: DashboardHeaderProps) => {
+export const DashboardHeader = ({ onSettings, onSignOut }: DashboardHeaderProps) => {
   const [firstName, setFirstName] = useState("");
 
   useEffect(() => {
-    const loadProfile = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data } = await supabase.from("profiles").select("first_name").eq("user_id", user.id).single();
-      if (data) setFirstName(data.first_name);
-    };
-    loadProfile();
+    setFirstName(getProfileFirstName());
   }, []);
 
   const getGreeting = () => {

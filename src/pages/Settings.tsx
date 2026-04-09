@@ -1,15 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { ArrowLeft, Save, Download, RotateCcw } from "lucide-react";
+import { ArrowLeft, Save, Download, RotateCcw, Upload } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import jsPDF from "jspdf";
 import { format } from "date-fns";
+import { exportLocalBackup, getSettings, getWorkHoursForMonth, importLocalBackup, LocalBackupFile, saveSettings } from "@/lib/localData";
+import { isLocalAuthenticated } from "@/lib/localAuth";
 
 const daysOfWeek = [
   { key: "monday", label: "יום שני", emoji: "📅" },
@@ -31,21 +32,28 @@ export default function Settings() {
   const [workDays, setWorkDays] = useState<Record<string, boolean>>({
     monday: true, tuesday: true, wednesday: true, thursday: true, friday: true, saturday: false, sunday: false,
   });
+  const [hourlyRate, setHourlyRate] = useState<number>(0);
   const [exportMonth, setExportMonth] = useState(new Date().getMonth());
   const [exportYear, setExportYear] = useState(new Date().getFullYear());
   const [exporting, setExporting] = useState(false);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { loadSettings(); }, []);
+  useEffect(() => {
+    if (!isLocalAuthenticated()) {
+      navigate("/");
+      return;
+    }
+    loadSettings();
+  }, []);
 
   const loadSettings = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data, error } = await supabase.from("user_settings").select("*").eq("user_id", user.id).single();
-      if (error) throw error;
+      const data = getSettings();
       if (data) {
         setHoursPerDay(data.hours_per_day as Record<string, number>);
         setWorkDays(data.work_days as Record<string, boolean>);
+        setHourlyRate(Number(data.hourly_rate || 0));
       }
     } catch { toast.error("שגיאה בטעינת הגדרות"); } finally { setLoading(false); }
   };
@@ -53,10 +61,7 @@ export default function Settings() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { error } = await supabase.from("user_settings").update({ work_days: workDays, hours_per_day: hoursPerDay }).eq("user_id", user.id);
-      if (error) throw error;
+      saveSettings({ work_days: workDays, hours_per_day: hoursPerDay, hourly_rate: hourlyRate });
       toast.success("ההגדרות נשמרו! ✅");
       navigate("/");
     } catch { toast.error("שגיאה בשמירה"); } finally { setSaving(false); }
@@ -71,20 +76,16 @@ export default function Settings() {
   const handleExportReport = async () => {
     setExporting(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
       const startDate = new Date(exportYear, exportMonth, 1);
       const endDate = new Date(exportYear, exportMonth + 1, 0);
       const daysInMonth = endDate.getDate();
-      const { data: workHoursData } = await supabase.from("work_hours").select("*")
-        .eq("user_id", user.id).gte("date", format(startDate, 'yyyy-MM-dd'))
-        .lte("date", format(endDate, 'yyyy-MM-dd')).order("date");
+      const workHoursData = getWorkHoursForMonth(exportYear, exportMonth);
 
       const pdf = new jsPDF();
       const monthName = startDate.toLocaleDateString('he-IL', { month: 'long', year: 'numeric' });
       pdf.setFontSize(18); pdf.text(`Work Report - ${monthName}`, 20, 20);
       pdf.setFontSize(11);
-      let yPos = 35; let totalHours = 0; let daysWorked = 0;
+      let yPos = 35; let totalHours = 0; let daysWorked = 0; let totalEarnings = 0;
       for (let day = 1; day <= daysInMonth; day++) {
         const date = new Date(exportYear, exportMonth, day);
         const dateStr = format(date, 'yyyy-MM-dd');
@@ -92,8 +93,10 @@ export default function Settings() {
         const entry = workHoursData?.find(wh => wh.date === dateStr);
         if (entry && (entry.status === 'worked' || !entry.status)) {
           const hours = entry.hours_worked || 0;
+          const earnings = hours * hourlyRate;
           totalHours += hours; daysWorked++;
-          let line = `${dateStr} (${dayName}): ${hours.toFixed(2)}h`;
+          totalEarnings += earnings;
+          let line = `${dateStr} (${dayName}): ${hours.toFixed(2)}h | ${earnings.toFixed(2)} ILS`;
           if (entry.start_time && entry.end_time) line += ` (${entry.start_time} - ${entry.end_time})`;
           pdf.text(line, 20, yPos); yPos += 7;
           if (yPos > 270) { pdf.addPage(); yPos = 20; }
@@ -103,10 +106,56 @@ export default function Settings() {
       pdf.setFontSize(14); pdf.text('SUMMARY', 20, yPos); yPos += 10;
       pdf.setFontSize(11);
       pdf.text(`Days Worked: ${daysWorked}`, 20, yPos); yPos += 7;
-      pdf.text(`Total Hours: ${totalHours.toFixed(2)}`, 20, yPos);
+      pdf.text(`Total Hours: ${totalHours.toFixed(2)}`, 20, yPos); yPos += 7;
+      pdf.text(`Hourly Rate: ${hourlyRate.toFixed(2)} ILS`, 20, yPos); yPos += 7;
+      pdf.text(`Total Earnings: ${totalEarnings.toFixed(2)} ILS`, 20, yPos);
       pdf.save(`work-report-${exportYear}-${String(exportMonth + 1).padStart(2, '0')}.pdf`);
       toast.success("הדוח יוצא בהצלחה! 📄");
     } catch { toast.error("שגיאה בייצוא"); } finally { setExporting(false); }
+  };
+
+  const handleExportBackup = async () => {
+    setBackupLoading(true);
+    try {
+      const backup = exportLocalBackup();
+
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `worktrack-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      toast.success("קובץ גיבוי נשמר בהצלחה");
+    } catch {
+      toast.error("שגיאה ביצירת הגיבוי");
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleRestoreBackup = async (file: File) => {
+    setBackupLoading(true);
+    try {
+      const content = await file.text();
+      const parsed = JSON.parse(content) as Partial<LocalBackupFile>;
+
+      if (!parsed || parsed.version !== 1 || !parsed.user_settings || !Array.isArray(parsed.work_hours)) {
+        throw new Error("Invalid backup format");
+      }
+
+      importLocalBackup(parsed as LocalBackupFile);
+
+      setWorkDays(parsed.user_settings.work_days as Record<string, boolean>);
+      setHoursPerDay(parsed.user_settings.hours_per_day as Record<string, number>);
+      toast.success("השחזור הושלם בהצלחה");
+    } catch {
+      toast.error("קובץ הגיבוי לא תקין או ששחזור נכשל");
+    } finally {
+      setBackupLoading(false);
+      if (restoreInputRef.current) restoreInputRef.current.value = "";
+    }
   };
 
   if (loading) {
@@ -138,6 +187,17 @@ export default function Settings() {
             <Button variant="ghost" size="sm" onClick={handleResetSchedule} className="text-xs gap-1 text-muted-foreground rounded-xl">
               <RotateCcw className="h-3 w-3" /> איפוס
             </Button>
+          </div>
+          <div className="mb-4 p-3 rounded-2xl bg-primary/5 border border-primary/10">
+            <Label className="text-xs text-muted-foreground">שכר לשעה (₪)</Label>
+            <Input
+              type="number"
+              step="0.5"
+              min="0"
+              value={String(hourlyRate)}
+              onChange={(e) => setHourlyRate(parseFloat(e.target.value) || 0)}
+              className="bg-background border-border rounded-xl mt-1 h-10"
+            />
           </div>
           <div className="space-y-2">
             {daysOfWeek.map(({ key, label, emoji }) => (
@@ -204,6 +264,43 @@ export default function Settings() {
           <Button onClick={handleExportReport} disabled={exporting} className="w-full rounded-2xl bg-gradient-to-r from-accent to-success text-accent-foreground h-12 font-semibold">
             <Download className="mr-2 h-4 w-4" /> {exporting ? "מייצא..." : "ייצא דוח PDF"}
           </Button>
+        </div>
+
+        {/* Local backup and restore */}
+        <div className="bg-card rounded-3xl p-5 shadow-sm border border-border/50">
+          <h2 className="text-lg font-bold mb-2">💾 גיבוי ושחזור מקומי</h2>
+          <p className="text-sm text-muted-foreground mb-4">
+            שמור קובץ גיבוי על המחשב, ותוכל לשחזר נתונים גם אחרי מחיקת נתוני דפדפן.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Button
+              onClick={handleExportBackup}
+              disabled={backupLoading}
+              className="rounded-2xl bg-gradient-to-r from-primary to-secondary h-11 font-semibold"
+            >
+              <Download className="mr-2 h-4 w-4" />
+              {backupLoading ? "מעבד..." : "ייצא גיבוי JSON"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => restoreInputRef.current?.click()}
+              disabled={backupLoading}
+              className="rounded-2xl h-11 font-semibold"
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              {backupLoading ? "מעבד..." : "שחזר מגיבוי"}
+            </Button>
+          </div>
+          <input
+            ref={restoreInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void handleRestoreBackup(file);
+            }}
+          />
         </div>
 
         <Button onClick={handleSave} disabled={saving} className="w-full rounded-2xl bg-gradient-to-r from-primary to-secondary h-12 font-semibold text-base shadow-md card-glow-pink">

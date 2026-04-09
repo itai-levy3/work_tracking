@@ -1,22 +1,14 @@
 import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
-import { format } from "date-fns";
 import { DashboardHeader } from "./dashboard/DashboardHeader";
 import { StatsCards } from "./dashboard/StatsCards";
 import { MonthSelector } from "./MonthSelector";
 import { ProgressBar } from "./ProgressBar";
 import { TimeCalculator } from "./TimeCalculator";
 import { DaysList } from "./dashboard/DaysList";
-
-interface WorkHour {
-  date: string;
-  hours_worked: number;
-  start_time: string | null;
-  end_time: string | null;
-  status?: string;
-}
+import { clearMonthWorkHours, getSettings, getWorkHoursForMonth, WorkHour } from "@/lib/localData";
+import { logoutLocalAuth } from "@/lib/localAuth";
 
 export const Dashboard = () => {
   const navigate = useNavigate();
@@ -29,50 +21,30 @@ export const Dashboard = () => {
 
   const loadData = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data: settingsData } = await supabase.from("user_settings").select("*").eq("user_id", user.id).single();
+      const settingsData = getSettings();
+      const hoursData = getWorkHoursForMonth(currentMonth.getFullYear(), currentMonth.getMonth());
       setSettings(settingsData);
-
-      const startDate = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
-      const endDate = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
-
-      const { data: hoursData } = await supabase.from("work_hours").select("*")
-        .eq("user_id", user.id)
-        .gte("date", format(startDate, 'yyyy-MM-dd'))
-        .lte("date", format(endDate, 'yyyy-MM-dd'))
-        .order("date");
-
       setWorkHours(hoursData || []);
-    } catch (error: any) {
+    } catch {
       toast.error("שגיאה בטעינת נתונים");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    toast.success("התנתקת בהצלחה");
-  };
-
   const handleClearMonth = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const startDate = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
-      const endDate = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
-      const { error } = await supabase.from("work_hours").delete()
-        .eq("user_id", user.id)
-        .gte("date", format(startDate, 'yyyy-MM-dd'))
-        .lte("date", format(endDate, 'yyyy-MM-dd'));
-      if (error) throw error;
+      clearMonthWorkHours(currentMonth.getFullYear(), currentMonth.getMonth());
       toast.success("הנתונים נמחקו בהצלחה");
       loadData();
-    } catch (error: any) {
+    } catch {
       toast.error("שגיאה במחיקת נתונים");
     }
+  };
+
+  const handleSignOut = () => {
+    logoutLocalAuth();
+    toast.success("התנתקת בהצלחה");
   };
 
   const calculateMonthlyGoal = () => {
@@ -134,7 +106,7 @@ export const Dashboard = () => {
       </div>
 
       <div className="relative z-10 max-w-xl mx-auto p-4 md:p-6 pb-20 space-y-4">
-        <DashboardHeader onSignOut={handleSignOut} onSettings={() => navigate("/settings")} />
+        <DashboardHeader onSettings={() => navigate("/settings")} onSignOut={handleSignOut} />
         <MonthSelector currentMonth={currentMonth} onMonthChange={setCurrentMonth} />
         <StatsCards totalWorked={totalWorked} monthlyGoal={monthlyGoal} daysWorked={daysWorkedCount} workHours={workHours} />
         <ProgressBar worked={totalWorked} goal={monthlyGoal} />
