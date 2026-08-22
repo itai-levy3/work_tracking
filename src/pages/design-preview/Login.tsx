@@ -2,7 +2,7 @@ import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { loginLocalAuth, setupLocalAuth } from "@/lib/localAuth";
-import { getRecoveryQuestionIds, questionTextFor, resetPasswordWithPin, resetPinWithSecurityAnswers, saveRecoverySetup, SECURITY_QUESTIONS } from "@/lib/recoveryAuth";
+import { getRecoveryQuestionIds, hasRecoverySetup, questionTextFor, resetPasswordWithPin, resetPinWithSecurityAnswers, saveRecoverySetup, SECURITY_QUESTIONS } from "@/lib/recoveryAuth";
 import { LH } from "./tokens";
 import { globalStyle } from "./Shared";
 
@@ -165,7 +165,27 @@ export default function DesignPreviewLogin() {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      toast.error(message.includes("already registered") ? "משתמש עם המייל הזה כבר קיים" : "שגיאה ביצירת משתמש");
+      if (message.includes("already registered")) {
+        // Could be a genuine conflict, or this user's OWN earlier signup that never finished the
+        // required PIN/security-questions step (e.g. they closed the tab). The only safe way to
+        // tell them apart is to try logging in with the password just typed — if it's really
+        // theirs, this succeeds and they simply continue the recovery setup they abandoned.
+        const loggedIn = await loginLocalAuth(email, password);
+        if (loggedIn) {
+          const configured = await hasRecoverySetup();
+          if (!configured) {
+            toast.success("החשבון כבר קיים — נשאר רק שלב הגדרת שחזור הסיסמה");
+            setMode("recovery_setup");
+          } else {
+            toast.success("התחברת בהצלחה");
+            navigate("/design-preview");
+          }
+        } else {
+          toast.error("משתמש עם המייל הזה כבר קיים");
+        }
+      } else {
+        toast.error("שגיאה ביצירת משתמש");
+      }
     } finally {
       setLoading(false);
     }
@@ -201,8 +221,14 @@ export default function DesignPreviewLogin() {
       if (!ok) {
         toast.error("מייל או סיסמה שגויים");
       } else {
-        toast.success("התחברת בהצלחה");
-        navigate("/design-preview");
+        const configured = await hasRecoverySetup();
+        if (!configured) {
+          toast.success("נשאר רק שלב הגדרת שחזור הסיסמה");
+          setMode("recovery_setup");
+        } else {
+          toast.success("התחברת בהצלחה");
+          navigate("/design-preview");
+        }
       }
     } finally {
       setLoading(false);
