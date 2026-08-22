@@ -29,7 +29,12 @@ export const setupLocalAuth = async (email: string, password: string): Promise<{
     emitAuthChange();
     return { needsEmailConfirmation: false };
   }
-  // Supabase project has "confirm email" enabled — no session until the user clicks the link.
+  // Supabase returns no error AND no session both when "confirm email" is on for a genuinely new
+  // signup, and when the email already has an account (to avoid leaking which emails are
+  // registered) — the two are told apart by `identities`: empty means "already registered".
+  if (data.user && data.user.identities && data.user.identities.length === 0) {
+    throw new Error("already registered");
+  }
   return { needsEmailConfirmation: true };
 };
 
