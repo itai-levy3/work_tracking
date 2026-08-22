@@ -1023,6 +1023,18 @@ export const importLocalBackup = (backup: LocalBackupFile) => {
   });
 };
 
+/** Wipes the CURRENT logged-in user's local bucket entirely (used by "איפוס נתונים" in Settings,
+ * paired with resetAllCloudData so a fresh start doesn't just get bootstrap-pushed right back up
+ * from this cached copy on the next login). Other users' local buckets on this browser, if any,
+ * are untouched. */
+export const resetCurrentUserLocalData = () => {
+  const currentEmail = getCurrentUserEmail();
+  if (!currentEmail) return;
+  const users = readUsersData();
+  delete users[normalizeEmail(currentEmail)];
+  writeUsersData(users);
+};
+
 export const replaceCurrentUserData = (payload: {
   settings: UserSettings;
   workHours: WorkHour[];
