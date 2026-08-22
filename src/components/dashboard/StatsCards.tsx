@@ -1,21 +1,26 @@
 import { Clock, Target, CalendarDays, TrendingUp, Award } from "lucide-react";
+import { formatHM } from "@/lib/localData";
 
 interface StatsCardsProps {
   totalWorked: number;
   monthlyGoal: number;
   daysWorked: number;
   workHours: { date: string; hours_worked: number; status?: string }[];
+  /** Hours still owed today vs. the daily target (0 if met or exceeded). */
+  todayRemainingHours: number;
+  /** Hours worked today beyond the daily target. */
+  todayOvertimeHours: number;
 }
 
-export const StatsCards = ({ totalWorked, monthlyGoal, daysWorked, workHours }: StatsCardsProps) => {
-  const avgHours = daysWorked > 0 ? totalWorked / daysWorked : 0;
+export const StatsCards = ({ totalWorked, monthlyGoal, daysWorked, todayRemainingHours, todayOvertimeHours }: StatsCardsProps) => {
   const percentage = monthlyGoal > 0 ? Math.min((totalWorked / monthlyGoal) * 100, 100) : 0;
+  const hasOvertime = todayOvertimeHours > 0;
 
   const topStats = [
     {
       label: "יעד חודשי",
-      value: monthlyGoal.toFixed(0),
-      suffix: "h",
+      value: formatHM(monthlyGoal),
+      suffix: "",
       icon: Target,
       bg: "from-[hsl(35,90%,55%,0.15)] to-[hsl(25,85%,50%,0.08)]",
       iconColor: "text-secondary",
@@ -32,12 +37,13 @@ export const StatsCards = ({ totalWorked, monthlyGoal, daysWorked, workHours }: 
 
   const bottomStats = [
     {
-      label: "ממוצע יומי",
-      value: avgHours.toFixed(1),
-      suffix: "h",
+      label: hasOvertime ? "שעות נוספות היום" : "נותר להשלמה היום",
+      value: hasOvertime ? `+${formatHM(todayOvertimeHours)}` : formatHM(todayRemainingHours),
+      suffix: "",
       icon: TrendingUp,
-      bg: "from-[hsl(210,80%,55%,0.15)] to-[hsl(230,75%,55%,0.08)]",
-      iconColor: "text-info",
+      bg: hasOvertime ? "from-[hsl(145,65%,45%,0.18)] to-[hsl(160,60%,40%,0.1)]" : "from-[hsl(210,80%,55%,0.15)] to-[hsl(230,75%,55%,0.08)]",
+      iconColor: hasOvertime ? "text-success" : "text-info",
+      valueColor: hasOvertime ? "text-success" : "text-foreground",
     },
     {
       label: "התקדמות",
@@ -49,12 +55,12 @@ export const StatsCards = ({ totalWorked, monthlyGoal, daysWorked, workHours }: 
     },
   ];
 
-  const CircleStat = ({ stat, delay }: { stat: typeof topStats[0]; delay: number }) => (
+  const CircleStat = ({ stat, delay }: { stat: typeof topStats[0] & { valueColor?: string }; delay: number }) => (
     <div
       className={`w-[9.5rem] h-[9.5rem] rounded-full bg-gradient-to-br ${stat.bg} bg-card border border-border/50 flex flex-col items-center justify-center hover-lift transition-all animate-fade-up`}
       style={{ animationDelay: `${delay}s` }}
     >
-      <p className="text-3xl font-bold text-foreground leading-none">
+      <p className={`text-3xl font-bold leading-none ${stat.valueColor || 'text-foreground'}`}>
         {stat.value}
         {stat.suffix && <span className="text-sm font-normal text-muted-foreground ml-0.5">{stat.suffix}</span>}
       </p>
@@ -83,8 +89,7 @@ export const StatsCards = ({ totalWorked, monthlyGoal, daysWorked, workHours }: 
             textShadow: '0 4px 24px hsl(340 75% 55% / 0.3), 0 2px 8px hsl(25 85% 50% / 0.2)',
           }}
         >
-          {totalWorked.toFixed(1)}
-          <span className="text-2xl font-bold ml-1">h</span>
+          {formatHM(totalWorked)}
         </p>
       </div>
 
@@ -103,7 +108,7 @@ export const StatsCards = ({ totalWorked, monthlyGoal, daysWorked, workHours }: 
           </div>
           <div>
             <p className="font-semibold text-success text-sm">יעד הושג! 🎉</p>
-            <p className="text-xs text-muted-foreground">עברת את היעד ב-{(totalWorked - monthlyGoal).toFixed(1)} שעות</p>
+            <p className="text-xs text-muted-foreground">עברת את היעד ב-{formatHM(totalWorked - monthlyGoal)} שעות</p>
           </div>
         </div>
       )}

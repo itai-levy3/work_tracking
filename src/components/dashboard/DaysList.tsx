@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { DayInput } from "../DayInput";
 import { format } from "date-fns";
+import { DayFraction } from "@/lib/localData";
 
 interface WorkHour {
   date: string;
@@ -20,17 +21,20 @@ interface WorkHour {
   start_time: string | null;
   end_time: string | null;
   status?: string;
+  fraction?: DayFraction;
+  paid?: boolean;
 }
 
 interface DaysListProps {
   days: Date[];
   workHours: WorkHour[];
+  hoursPerDay: Record<string, number>;
   onHoursUpdate: () => void;
   onClearMonth: () => void;
   currentMonth: Date;
 }
 
-export const DaysList = ({ days, workHours, onHoursUpdate, onClearMonth, currentMonth }: DaysListProps) => {
+export const DaysList = ({ days, workHours, hoursPerDay, onHoursUpdate, onClearMonth, currentMonth }: DaysListProps) => {
   const getTimesForDay = (date: Date) => {
     const dateStr = format(date, 'yyyy-MM-dd');
     const entry = workHours.find(wh => wh.date === dateStr);
@@ -38,7 +42,14 @@ export const DaysList = ({ days, workHours, onHoursUpdate, onClearMonth, current
       startTime: entry?.start_time || null,
       endTime: entry?.end_time || null,
       status: entry?.status || 'worked',
+      fraction: entry?.fraction,
+      paid: entry?.paid,
     };
+  };
+
+  const getDailyTarget = (date: Date) => {
+    const dayName = date.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+    return hoursPerDay?.[dayName] || 0;
   };
 
   return (
@@ -54,7 +65,7 @@ export const DaysList = ({ days, workHours, onHoursUpdate, onClearMonth, current
 
       <div className="grid gap-2">
         {days.map((day, index) => {
-          const { startTime, endTime, status } = getTimesForDay(day);
+          const { startTime, endTime, status, fraction, paid } = getTimesForDay(day);
           const dateKey = format(day, 'yyyy-MM-dd');
           return (
             <DayInput
@@ -63,6 +74,9 @@ export const DaysList = ({ days, workHours, onHoursUpdate, onClearMonth, current
               startTime={startTime}
               endTime={endTime}
               status={status}
+              fraction={fraction}
+              paid={paid}
+              dailyTargetHours={getDailyTarget(day)}
               onHoursUpdate={onHoursUpdate}
             />
           );

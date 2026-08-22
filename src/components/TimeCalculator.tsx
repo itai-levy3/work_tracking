@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Timer, Clock } from "lucide-react";
+import { formatHM } from "@/lib/localData";
 
 interface TimeCalculatorProps {
   totalWorked: number;
@@ -46,7 +47,7 @@ export const TimeCalculator = ({
     const hh = String(finishDate.getHours()).padStart(2, '0');
     const mm = String(finishDate.getMinutes()).padStart(2, '0');
 
-    setResult(`סיום ב-${hh}:${mm} (${requiredHoursToday} שעות נדרשות)`);
+    setResult(`סיום ב-${hh}:${mm} (${formatHM(requiredHoursToday)} שעות נדרשות)`);
   };
 
   const getTodayRequiredHours = () => {
@@ -68,7 +69,7 @@ export const TimeCalculator = ({
         <div>
           <h3 className="font-semibold text-foreground">טיימר יומי ⏱️</h3>
           <p className="text-xs text-muted-foreground">
-            {todayHours > 0 ? `${todayHours} שעות נדרשות היום` : 'היום יום חופש! 🎉'}
+            {todayHours > 0 ? `${formatHM(todayHours)} שעות נדרשות היום` : 'היום יום חופש! 🎉'}
           </p>
         </div>
       </div>

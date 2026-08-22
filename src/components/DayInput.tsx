@@ -5,15 +5,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { RotateCcw, Clock, Briefcase, Heart, Palmtree, Flag, XCircle } from "lucide-react";
-import { deleteWorkHourByDate, upsertWorkHour } from "@/lib/localData";
+import { deleteWorkHourByDate, upsertWorkHour, formatHM, fractionMultiplier, DayFraction } from "@/lib/localData";
 
 interface DayInputProps {
   date: Date;
   startTime: string | null;
   endTime: string | null;
   status?: string;
+  fraction?: DayFraction;
+  paid?: boolean;
+  /** Scheduled work hours for this weekday, used to auto-fill sick/vacation hours. */
+  dailyTargetHours: number;
   onHoursUpdate: () => void;
 }
+
+const fractionLabels: Record<DayFraction, string> = {
+  full: "יום מלא",
+  three_quarters: "3/4 יום",
+  half: "חצי יום",
+};
 
 const statusConfig: Record<string, { label: string; icon: any; bgClass: string; borderClass: string; emoji: string }> = {
   worked: { label: "עבדתי", icon: Briefcase, bgClass: "bg-card", borderClass: "border-border/50", emoji: "💼" },
@@ -23,10 +33,12 @@ const statusConfig: Record<string, { label: string; icon: any; bgClass: string; 
   not_worked: { label: "לא עבד", icon: XCircle, bgClass: "bg-muted/30", borderClass: "border-border/30", emoji: "⏸️" },
 };
 
-export const DayInput = ({ date, startTime, endTime, status = 'worked', onHoursUpdate }: DayInputProps) => {
+export const DayInput = ({ date, startTime, endTime, status = 'worked', fraction, paid, dailyTargetHours, onHoursUpdate }: DayInputProps) => {
   const [start, setStart] = useState(startTime || "");
   const [end, setEnd] = useState(endTime || "");
   const [dayStatus, setDayStatus] = useState(status);
+  const [dayFraction, setDayFraction] = useState<DayFraction>(fraction || "full");
+  const [isPaid, setIsPaid] = useState(paid !== false);
 
   const calculateHours = (s: string, e: string) => {
     if (!s || !e) return 0;
@@ -35,14 +47,34 @@ export const DayInput = ({ date, startTime, endTime, status = 'worked', onHoursU
     return ((eh * 60 + em) - (sh * 60 + sm)) / 60;
   };
 
-  const saveToDatabase = async (startValue: string, endValue: string, statusValue?: string) => {
+  const isOff = dayStatus === 'sick' || dayStatus === 'vacation';
+
+  const saveToDatabase = async (
+    startValue: string,
+    endValue: string,
+    statusValue?: string,
+    fractionValue?: DayFraction,
+    paidValue?: boolean,
+  ) => {
     try {
       const dateStr = format(date, 'yyyy-MM-dd');
-      const hours = calculateHours(startValue, endValue);
+      const nextStatus = statusValue || dayStatus;
+      const nextFraction = fractionValue || dayFraction;
+      const nextPaid = paidValue !== undefined ? paidValue : isPaid;
+      const nextIsOff = nextStatus === 'sick' || nextStatus === 'vacation';
+
+      const hours = nextIsOff
+        ? (nextPaid ? dailyTargetHours * fractionMultiplier(nextFraction) : 0)
+        : calculateHours(startValue, endValue);
+
       upsertWorkHour({
         date: dateStr,
-        start_time: startValue || null, end_time: endValue || null,
-        hours_worked: hours, status: statusValue || dayStatus,
+        start_time: nextIsOff ? null : (startValue || null),
+        end_time: nextIsOff ? null : (endValue || null),
+        hours_worked: hours,
+        status: nextStatus,
+        fraction: nextIsOff ? nextFraction : undefined,
+        paid: nextIsOff ? nextPaid : undefined,
       });
       onHoursUpdate();
     } catch {
@@ -53,7 +85,7 @@ export const DayInput = ({ date, startTime, endTime, status = 'worked', onHoursU
   const handleReset = async () => {
     try {
       deleteWorkHourByDate(format(date, 'yyyy-MM-dd'));
-      setStart(""); setEnd(""); setDayStatus("worked");
+      setStart(""); setEnd(""); setDayStatus("worked"); setDayFraction("full"); setIsPaid(true);
       onHoursUpdate();
     } catch {
       toast.error("שגיאה באיפוס");
@@ -62,7 +94,7 @@ export const DayInput = ({ date, startTime, endTime, status = 'worked', onHoursU
 
   const dayName = date.toLocaleDateString('he-IL', { weekday: 'short' });
   const dayNumber = date.getDate();
-  const hours = calculateHours(start, end);
+  const hours = isOff ? (isPaid ? dailyTargetHours * fractionMultiplier(dayFraction) : 0) : calculateHours(start, end);
   const isToday = new Date().toDateString() === date.toDateString();
   const hasData = start || end || dayStatus !== 'worked';
   const config = statusConfig[dayStatus] || statusConfig.worked;
@@ -90,12 +122,12 @@ export const DayInput = ({ date, startTime, endTime, status = 'worked', onHoursU
         </div>
 
         <div className="flex items-center gap-1.5">
-          {dayStatus === 'worked' && hours > 0 && (
+          {hours > 0 && (
             <div className="px-2.5 py-1 rounded-full bg-gradient-to-r from-success/10 to-accent/10 border border-success/20">
-              <span className="text-xs font-bold text-success font-mono">{hours.toFixed(1)}h</span>
+              <span className="text-xs font-bold text-success font-mono">{formatHM(hours)}</span>
             </div>
           )}
-          {dayStatus !== 'worked' && (
+          {isOff && (
             <span className="text-sm">{config.emoji}</span>
           )}
           <Button 
@@ -108,27 +140,53 @@ export const DayInput = ({ date, startTime, endTime, status = 'worked', onHoursU
         </div>
       </div>
 
-      {/* Bottom row: Time inputs + status */}
+      {/* Bottom row: Time inputs (or off-day controls) + status */}
       <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1.5 flex-1">
-          <Input
-            type="time"
-            value={start}
-            onChange={(e) => { setStart(e.target.value); saveToDatabase(e.target.value, end); }}
-            className="h-9 text-xs bg-background border-border/50 rounded-xl flex-1 min-w-0"
-            disabled={dayStatus !== 'worked'}
-          />
-          <span className="text-muted-foreground text-xs">→</span>
-          <Input
-            type="time"
-            value={end}
-            onChange={(e) => { setEnd(e.target.value); saveToDatabase(start, e.target.value); }}
-            className="h-9 text-xs bg-background border-border/50 rounded-xl flex-1 min-w-0"
-            disabled={dayStatus !== 'worked'}
-          />
-        </div>
+        {!isOff ? (
+          <div className="flex items-center gap-1.5 flex-1">
+            <Input
+              type="time"
+              value={start}
+              onChange={(e) => { setStart(e.target.value); saveToDatabase(e.target.value, end); }}
+              className="h-9 text-xs bg-background border-border/50 rounded-xl flex-1 min-w-0"
+            />
+            <span className="text-muted-foreground text-xs">→</span>
+            <Input
+              type="time"
+              value={end}
+              onChange={(e) => { setEnd(e.target.value); saveToDatabase(start, e.target.value); }}
+              className="h-9 text-xs bg-background border-border/50 rounded-xl flex-1 min-w-0"
+            />
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 flex-1">
+            <Select
+              value={dayFraction}
+              onValueChange={(v) => { const f = v as DayFraction; setDayFraction(f); saveToDatabase(start, end, dayStatus, f); }}
+            >
+              <SelectTrigger className="h-9 text-xs bg-background border-border/50 rounded-xl flex-1 min-w-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-popover border-border shadow-lg z-50">
+                {(Object.entries(fractionLabels) as [DayFraction, string][]).map(([key, label]) => (
+                  <SelectItem key={key} value={key} className="text-xs">{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => { const p = !isPaid; setIsPaid(p); saveToDatabase(start, end, dayStatus, dayFraction, p); }}
+              className={`h-9 px-3 text-[11px] rounded-xl shrink-0 border ${
+                isPaid ? 'bg-success/10 border-success/30 text-success' : 'bg-destructive/10 border-destructive/30 text-destructive'
+              }`}
+            >
+              {isPaid ? 'משולם' : 'לא משולם'}
+            </Button>
+          </div>
+        )}
 
-        <Select value={dayStatus} onValueChange={(v) => { setDayStatus(v); saveToDatabase(start, end, v); }}>
+        <Select value={dayStatus} onValueChange={(v) => { setDayStatus(v); saveToDatabase(start, end, v, dayFraction, isPaid); }}>
           <SelectTrigger className="h-9 w-24 text-[11px] bg-background border-border/50 rounded-xl shrink-0">
             <SelectValue />
           </SelectTrigger>

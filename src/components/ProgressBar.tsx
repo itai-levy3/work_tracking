@@ -1,3 +1,5 @@
+import { formatHM } from "@/lib/localData";
+
 interface ProgressBarProps {
   worked: number;
   goal: number;
@@ -33,9 +35,9 @@ export const ProgressBar = ({ worked, goal }: ProgressBarProps) => {
       </div>
 
       <div className="flex justify-between text-xs mt-2">
-        <span className="text-muted-foreground font-medium">{worked.toFixed(1)}h הושלמו</span>
+        <span className="text-muted-foreground font-medium">{formatHM(worked)} הושלמו</span>
         <span className={`font-semibold ${isOverGoal ? 'text-success' : 'text-secondary'}`}>
-          {isOverGoal ? `+${(worked - goal).toFixed(1)}h מעל היעד! 🔥` : `${remaining.toFixed(1)}h נותרו`}
+          {isOverGoal ? `+${formatHM(worked - goal)} מעל היעד! 🔥` : `${formatHM(remaining)} נותרו`}
         </span>
       </div>
     </div>

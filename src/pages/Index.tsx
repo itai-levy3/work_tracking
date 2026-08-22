@@ -1,18 +1,7 @@
-import { useEffect, useState } from "react";
-import { Dashboard } from "@/components/Dashboard";
-import { LocalAuth } from "@/components/LocalAuth";
-import { isLocalAuthenticated } from "@/lib/localAuth";
+import { Navigate } from "react-router-dom";
 
-const Index = () => {
-  const [isAuth, setIsAuth] = useState(isLocalAuthenticated());
-
-  useEffect(() => {
-    const onAuthChange = () => setIsAuth(isLocalAuthenticated());
-    window.addEventListener("local-auth-changed", onAuthChange);
-    return () => window.removeEventListener("local-auth-changed", onAuthChange);
-  }, []);
-
-  return isAuth ? <Dashboard /> : <LocalAuth />;
-};
+// The real app lives entirely under /design-preview — this route exists only because it's the
+// site root that a bookmark or a fresh visit lands on.
+const Index = () => <Navigate to="/design-preview" replace />;
 
 export default Index;
