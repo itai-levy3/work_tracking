@@ -2,11 +2,12 @@ import { FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { getCurrentUserEmail, isLocalAuthenticated, loginLocalAuth, logoutLocalAuth, setupLocalAuth } from "@/lib/localAuth";
-import { getRecoveryQuestionIds, hasRecoverySetup, questionTextFor, resetPasswordWithPin, resetPinWithSecurityAnswers, saveRecoverySetup, SECURITY_QUESTIONS } from "@/lib/recoveryAuth";
+import { checkSecurityAnswer, getRecoveryQuestionIds, hasRecoverySetup, lockAccount, questionTextFor, resetPasswordWithPin, saveRecoverySetup, SECURITY_QUESTIONS, unlockAccount } from "@/lib/recoveryAuth";
+import { SecurityChallenge } from "./SecurityChallenge";
 import { LH } from "./tokens";
 import { globalStyle } from "./Shared";
 
-type Mode = "login" | "setup" | "recovery_setup" | "reset_pw_email" | "reset_pw_verify" | "reset_pin_verify";
+type Mode = "login" | "setup" | "recovery_setup" | "reset_pw_email" | "reset_pw_verify" | "reset_pin_verify" | "unlock_account";
 
 const fieldStyle: React.CSSProperties = {
   background: "#F8FAFF",
@@ -126,11 +127,18 @@ export default function DesignPreviewLogin() {
   const [resetPin, setResetPin] = useState("");
   const [resetNewPassword, setResetNewPassword] = useState("");
 
-  // Forgot the PIN too — security-question answers alone reset the PIN.
+  // Forgot the PIN too — a sequential security-question challenge resets the PIN.
   const [resetQuestionIds, setResetQuestionIds] = useState<string[]>([]);
-  const [resetAnswers, setResetAnswers] = useState<Record<string, string>>({});
   const [resetNewPin, setResetNewPin] = useState("");
   const [resetNewPinConfirm, setResetNewPinConfirm] = useState("");
+  const [pinChosen, setPinChosen] = useState(false);
+
+  // Account locked after too many wrong security answers — all 3 answers at once, plus a new
+  // password and PIN, reactivate it.
+  const [unlockAnswers, setUnlockAnswers] = useState<Record<string, string>>({});
+  const [unlockNewPassword, setUnlockNewPassword] = useState("");
+  const [unlockNewPin, setUnlockNewPin] = useState("");
+  const [unlockNewPinConfirm, setUnlockNewPinConfirm] = useState("");
 
   const resetAllFields = () => {
     setPassword("");
@@ -142,9 +150,13 @@ export default function DesignPreviewLogin() {
     setResetPin("");
     setResetNewPassword("");
     setResetQuestionIds([]);
-    setResetAnswers({});
     setResetNewPin("");
     setResetNewPinConfirm("");
+    setPinChosen(false);
+    setUnlockAnswers({});
+    setUnlockNewPassword("");
+    setUnlockNewPin("");
+    setUnlockNewPinConfirm("");
   };
 
   const switchMode = (next: Mode) => {
@@ -264,9 +276,24 @@ export default function DesignPreviewLogin() {
     }
   };
 
-  const handleResetPwEmailSubmit = (e: FormEvent) => {
+  const handleResetPwEmailSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setMode("reset_pw_verify");
+    setLoading(true);
+    try {
+      const status = await getRecoveryQuestionIds(email);
+      if (!status) {
+        toast.error("לא נמצא שחזור מוגדר עבור המייל הזה");
+        return;
+      }
+      setResetQuestionIds(status.questionIds);
+      if (status.locked) {
+        setMode("unlock_account");
+      } else {
+        setMode("reset_pw_verify");
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleResetPwVerifySubmit = async (e: FormEvent) => {
@@ -289,38 +316,69 @@ export default function DesignPreviewLogin() {
   const handleForgotPinClick = async () => {
     setLoading(true);
     try {
-      const ids = await getRecoveryQuestionIds(email);
-      if (!ids) {
+      const status = await getRecoveryQuestionIds(email);
+      if (!status) {
         toast.error("לא נמצא שחזור מוגדר עבור המייל הזה");
         return;
       }
-      setResetQuestionIds(ids);
-      setMode("reset_pin_verify");
+      setResetQuestionIds(status.questionIds);
+      if (status.locked) {
+        setMode("unlock_account");
+      } else {
+        setMode("reset_pin_verify");
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleResetPinSubmit = async (e: FormEvent) => {
+  const handleChoosePin = (e: FormEvent) => {
     e.preventDefault();
     if (!/^\d{4,8}$/.test(resetNewPin)) return toast.error("ה-PIN חייב להיות 4-8 ספרות");
     if (resetNewPin !== resetNewPinConfirm) return toast.error("ה-PIN ואימות ה-PIN אינם תואמים");
-    if (resetQuestionIds.some((id) => !resetAnswers[id]?.trim())) return toast.error("יש למלא תשובה לכל שאלה");
+    setPinChosen(true);
+  };
+
+  // The challenge already verified the answer against a specific question — passing resetNewPin
+  // lets a correct answer commit it in the same round trip (see check_answer in the Edge Function).
+  const handleChallengeAttempt = (questionId: string, answer: string) => checkSecurityAnswer(email, questionId, answer, resetNewPin);
+
+  const handleChallengeSuccess = () => {
+    toast.success("ה-PIN אופס! עכשיו אפשר להשתמש בו כדי לאפס את הסיסמה");
+    const newPin = resetNewPin;
+    switchMode("reset_pw_verify"); // wipes every draft field first, including resetNewPin
+    setResetPin(newPin);
+  };
+
+  // Covers both a wrong answer that the server already locked, and the countdown expiring on the
+  // client before an answer came in — lockAccount is idempotent, so calling it either way is safe.
+  const handleChallengeLocked = async () => {
+    await lockAccount(email);
+    toast.error("החשבון ננעל לאחר יותר מדי טעויות");
+    // Not switchMode — that would also wipe resetQuestionIds, which the unlock form still needs.
+    setMode("unlock_account");
+  };
+
+  const handleUnlockSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (resetQuestionIds.some((id) => !unlockAnswers[id]?.trim())) return toast.error("יש למלא תשובה לכל שאלה");
+    if (unlockNewPassword.length < 6) return toast.error("הסיסמה החדשה חייבת להיות לפחות 6 תווים");
+    if (!/^\d{4,8}$/.test(unlockNewPin)) return toast.error("ה-PIN חייב להיות 4-8 ספרות");
+    if (unlockNewPin !== unlockNewPinConfirm) return toast.error("ה-PIN ואימות ה-PIN אינם תואמים");
     setLoading(true);
     try {
-      const result = await resetPinWithSecurityAnswers(
+      const result = await unlockAccount(
         email,
-        resetQuestionIds.map((id) => ({ questionId: id, answer: resetAnswers[id] || "" })),
-        resetNewPin,
+        resetQuestionIds.map((id) => ({ questionId: id, answer: unlockAnswers[id] || "" })),
+        unlockNewPassword,
+        unlockNewPin,
       );
       if (!result.ok) {
         toast.error(result.message || "פרטים שגויים");
         return;
       }
-      toast.success("ה-PIN אופס! עכשיו אפשר להשתמש בו כדי לאפס את הסיסמה");
-      setResetPin("");
-      setResetNewPassword("");
-      setMode("reset_pw_verify");
+      toast.success("החשבון שוחזר! אפשר להתחבר עם הסיסמה וה-PIN החדשים");
+      switchMode("login");
     } finally {
       setLoading(false);
     }
@@ -335,6 +393,7 @@ export default function DesignPreviewLogin() {
     : mode === "recovery_setup" ? "הגדרת שחזור סיסמה"
     : mode === "reset_pw_email" ? "שחזור סיסמה"
     : mode === "reset_pw_verify" ? "איפוס סיסמה עם PIN"
+    : mode === "unlock_account" ? "שחזור חשבון נעול"
     : "שכחת גם את ה-PIN?";
 
   if (checkingSession) {
@@ -471,25 +530,52 @@ export default function DesignPreviewLogin() {
             </form>
           )}
 
-          {mode === "reset_pin_verify" && (
-            <form onSubmit={handleResetPinSubmit} className="flex flex-col gap-4">
-              <p className="text-[12.5px] -mt-1" style={{ color: LH.onSurfaceVariant }}>ענו נכון על 3 שאלות האבטחה כדי לבחור PIN חדש.</p>
+          {mode === "reset_pin_verify" && !pinChosen && (
+            <form onSubmit={handleChoosePin} className="flex flex-col gap-4">
+              <p className="text-[12.5px] -mt-1" style={{ color: LH.onSurfaceVariant }}>קודם תבחר/י PIN חדש — אחרי שתענה נכון על שאלת אבטחה הוא ייכנס לתוקף מיד.</p>
+              <SecretField label="PIN חדש (4-8 ספרות)" icon="pin" inputMode="numeric" maxLength={8} value={resetNewPin} onChange={(e) => setResetNewPin(e.target.value)} required />
+              <SecretField label="אימות PIN" icon="pin" inputMode="numeric" maxLength={8} value={resetNewPinConfirm} onChange={(e) => setResetNewPinConfirm(e.target.value)} required />
+              <button disabled={loading} className="w-full h-12 rounded-2xl font-bold text-white mt-1" style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 16px 32px -10px rgba(118,57,255,0.5)" }}>
+                המשך לשאלת אבטחה
+              </button>
+              <button type="button" onClick={() => switchMode("login")} className="text-[13px] font-medium text-center" style={{ color: LH.onSurfaceVariant }}>
+                חזרה להתחברות
+              </button>
+            </form>
+          )}
+
+          {mode === "reset_pin_verify" && pinChosen && (
+            <SecurityChallenge
+              questionIds={resetQuestionIds}
+              fieldStyle={fieldStyle}
+              onAttempt={handleChallengeAttempt}
+              onLocked={() => void handleChallengeLocked()}
+              onSuccess={handleChallengeSuccess}
+            />
+          )}
+
+          {mode === "unlock_account" && (
+            <form onSubmit={handleUnlockSubmit} className="flex flex-col gap-4">
+              <p className="text-[12.5px] -mt-1" style={{ color: LH.onSurfaceVariant }}>
+                החשבון נעול לאחר יותר מדי טעויות. ענה/י נכון על כל 3 שאלות האבטחה ובחר/י סיסמה ו-PIN חדשים כדי לשחזר אותו.
+              </p>
               {resetQuestionIds.map((id) => (
                 <div key={id} className="flex flex-col gap-1.5">
                   <label className="text-[12px] font-bold" style={{ color: LH.onSurfaceVariant }}>{questionTextFor(id)}</label>
                   <input
                     type="text"
-                    value={resetAnswers[id] || ""}
-                    onChange={(e) => setResetAnswers((prev) => ({ ...prev, [id]: e.target.value }))}
+                    value={unlockAnswers[id] || ""}
+                    onChange={(e) => setUnlockAnswers((prev) => ({ ...prev, [id]: e.target.value }))}
                     style={fieldStyle}
                     required
                   />
                 </div>
               ))}
-              <SecretField label="PIN חדש (4-8 ספרות)" icon="pin" inputMode="numeric" maxLength={8} value={resetNewPin} onChange={(e) => setResetNewPin(e.target.value)} required />
-              <SecretField label="אימות PIN" icon="pin" inputMode="numeric" maxLength={8} value={resetNewPinConfirm} onChange={(e) => setResetNewPinConfirm(e.target.value)} required />
+              <SecretField label="סיסמה חדשה" icon="lock" value={unlockNewPassword} onChange={(e) => setUnlockNewPassword(e.target.value)} required />
+              <SecretField label="PIN חדש (4-8 ספרות)" icon="pin" inputMode="numeric" maxLength={8} value={unlockNewPin} onChange={(e) => setUnlockNewPin(e.target.value)} required />
+              <SecretField label="אימות PIN" icon="pin" inputMode="numeric" maxLength={8} value={unlockNewPinConfirm} onChange={(e) => setUnlockNewPinConfirm(e.target.value)} required />
               <button disabled={loading} className="w-full h-12 rounded-2xl font-bold text-white mt-1" style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 16px 32px -10px rgba(118,57,255,0.5)" }}>
-                {loading ? "מעדכן..." : "איפוס PIN"}
+                {loading ? "משחזר..." : "שחזור חשבון"}
               </button>
               <button type="button" onClick={() => switchMode("login")} className="text-[13px] font-medium text-center" style={{ color: LH.onSurfaceVariant }}>
                 חזרה להתחברות

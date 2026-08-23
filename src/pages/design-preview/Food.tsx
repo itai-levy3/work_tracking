@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
-import { addFoodEntry, deleteFoodEntry, enableFoodTracking, FoodEntry, getFoodEntriesForMonth, getSettings, UserSettings } from "@/lib/localData";
+import { getCurrentUserEmail, isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
+import { addFoodEntry, deleteFoodEntry, enableFoodTracking, FoodEntry, getFoodEntriesForMonth, getSettings, updateFoodEntry, UserSettings } from "@/lib/localData";
 import { checkDailyCap, computeFoodMonthSummary, splitByDailyCap } from "@/lib/foodCard";
+import { verifyPin } from "@/lib/recoveryAuth";
 import { LH } from "./tokens";
 import { LHHeader, LHBottomNav, globalStyle } from "./Shared";
 
@@ -49,6 +50,17 @@ export default function DesignPreviewFood() {
   const [noteInput, setNoteInput] = useState("");
   const [dateInput, setDateInput] = useState(todayKey);
   const [capConfirm, setCapConfirm] = useState<{ requested: number; note: string; cardAmount: number; personalTopUp: number } | null>(null);
+
+  const [detailEntry, setDetailEntry] = useState<FoodEntry | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editAmount, setEditAmount] = useState("");
+  const [editDate, setEditDate] = useState(todayKey);
+  const [editNote, setEditNote] = useState("");
+
+  const [pinPromptOpen, setPinPromptOpen] = useState(false);
+  const [pinPromptValue, setPinPromptValue] = useState("");
+  const [pinPromptBusy, setPinPromptBusy] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const refresh = () => {
     setEntries(getFoodEntriesForMonth(currentMonth.getFullYear(), currentMonth.getMonth()));
@@ -149,6 +161,65 @@ export default function DesignPreviewFood() {
     setAddOpen(false);
     refresh();
     toast.success(`נרשם! ${money(capConfirm.personalTopUp)} מזה מהאשראי האישי שלך`);
+  };
+
+  const openDetail = (entry: FoodEntry) => {
+    setDetailEntry(entry);
+    setEditing(false);
+  };
+
+  const startEdit = () => {
+    if (!detailEntry) return;
+    setEditAmount(String(detailEntry.cardAmount + (detailEntry.personalTopUp || 0)));
+    setEditDate(detailEntry.date);
+    setEditNote(detailEntry.note || "");
+    setEditing(true);
+  };
+
+  const saveEdit = () => {
+    if (!detailEntry) return;
+    const amount = parseFloat(editAmount) || 0;
+    if (amount <= 0) return toast.error("יש להזין סכום תקין");
+    const updated: FoodEntry = {
+      ...detailEntry,
+      date: editDate,
+      cardAmount: amount,
+      personalTopUp: undefined,
+      note: editNote.trim() || undefined,
+    };
+    updateFoodEntry(updated);
+    setDetailEntry(null);
+    setEditing(false);
+    refresh();
+    toast.success("ההוצאה עודכנה");
+  };
+
+  // Deleting a food expense (card-tracked or not) requires the recovery PIN — the same PIN used
+  // to reset the login password — so a shared device can't quietly erase spending history.
+  const requestDelete = (id: string) => {
+    setPendingDeleteId(id);
+    setPinPromptValue("");
+    setPinPromptOpen(true);
+  };
+
+  const confirmDeleteWithPin = async () => {
+    const email = getCurrentUserEmail();
+    if (!email || !pendingDeleteId) return;
+    setPinPromptBusy(true);
+    try {
+      const ok = await verifyPin(email, pinPromptValue);
+      if (!ok) {
+        toast.error("PIN שגוי");
+        return;
+      }
+      deleteFoodEntry(pendingDeleteId);
+      refresh();
+      setPinPromptOpen(false);
+      setDetailEntry(null);
+      toast.success("ההוצאה נמחקה");
+    } finally {
+      setPinPromptBusy(false);
+    }
   };
 
   const grad = isLow ? ["#DC2626", "#F87171"] : ["#F59E0B", "#FB923C"];
@@ -272,9 +343,28 @@ export default function DesignPreviewFood() {
                     <span className="relative z-10 text-white text-[11px] font-bold uppercase tracking-wider mt-1.5">נותר החודש</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 px-4 py-2 rounded-full" style={{ background: `${grad[0]}14` }}>
-                  <span className="text-[12.5px] font-bold" style={{ color: "#101A46" }}>
-                    {money(summary.spentFromCard)} מתוך {money(summary.monthlyAllowance)}
+                <div className="flex items-center gap-2 px-5 py-2.5 rounded-full" style={{ background: `${grad[0]}14` }}>
+                  <span
+                    className="tabular-nums"
+                    style={{
+                      fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif",
+                      fontSize: 19,
+                      fontWeight: 800,
+                      letterSpacing: "-0.02em",
+                      backgroundImage: `linear-gradient(160deg, ${grad[0]}, ${grad[1]})`,
+                      WebkitBackgroundClip: "text",
+                      backgroundClip: "text",
+                      color: "transparent",
+                    }}
+                  >
+                    {money(summary.spentFromCard)}
+                  </span>
+                  <span className="text-[11.5px] font-medium" style={{ color: LH.onSurfaceVariant }}>מתוך</span>
+                  <span
+                    className="tabular-nums"
+                    style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em", color: "#101A46" }}
+                  >
+                    {money(summary.monthlyAllowance)}
                   </span>
                 </div>
                 {summary.personalTopUpTotal > 0 && (
@@ -306,7 +396,8 @@ export default function DesignPreviewFood() {
                   return (
                     <div
                       key={e.id}
-                      className="food-row-in rounded-2xl p-4 flex items-center justify-between relative overflow-hidden"
+                      onClick={() => openDetail(e)}
+                      className="food-row-in rounded-2xl p-4 flex items-center justify-between relative overflow-hidden cursor-pointer"
                       style={{ animationDelay: `${Math.min(i, 6) * 40}ms`, background: "rgba(255,255,255,0.75)", backdropFilter: "blur(20px)", boxShadow: "0 8px 24px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.7)" }}
                     >
                       <div className="flex items-center gap-3">
@@ -323,7 +414,11 @@ export default function DesignPreviewFood() {
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-[15px] font-extrabold tabular-nums" style={{ color: "#101A46" }}>{money(e.cardAmount + (e.personalTopUp || 0))}</span>
-                        <button onClick={() => { deleteFoodEntry(e.id); refresh(); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: "rgba(220,38,38,0.08)", color: "#DC2626" }}>
+                        <button
+                          onClick={(ev) => { ev.stopPropagation(); requestDelete(e.id); }}
+                          className="w-7 h-7 rounded-full flex items-center justify-center"
+                          style={{ background: "rgba(220,38,38,0.08)", color: "#DC2626" }}
+                        >
                           <span className="material-symbols-outlined text-[15px]">close</span>
                         </button>
                       </div>
@@ -402,6 +497,125 @@ export default function DesignPreviewFood() {
             <div className="flex gap-2">
               <button onClick={() => setCapConfirm(null)} className="flex-1 h-11 rounded-2xl font-bold" style={{ background: "rgba(35,50,100,0.06)", color: LH.onSurfaceVariant }}>ביטול</button>
               <button onClick={confirmOverCap} className="flex-1 h-11 rounded-2xl font-bold text-white" style={{ background: "linear-gradient(155deg,#DC2626,#F87171)" }}>מאשר, שלם מהאשראי שלי</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Expense detail / edit sheet */}
+      {detailEntry && (
+        <div className="fixed inset-0 z-[65] flex items-center justify-center px-6" style={{ background: "rgba(16,26,70,0.5)", backdropFilter: "blur(4px)" }} onClick={() => setDetailEntry(null)}>
+          <div
+            className="lh-rise w-full max-w-[360px] rounded-[32px] p-6 flex flex-col gap-4"
+            style={{ background: "linear-gradient(180deg, rgba(255,255,255,0.97), rgba(255,251,245,0.99))", backdropFilter: "blur(30px)", boxShadow: "0 30px 70px -15px rgba(16,26,70,0.35)", border: "1px solid rgba(255,255,255,0.85)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined" style={{ color: "#F59E0B" }}>restaurant</span>
+              <h3 className="text-[16px] font-bold" style={{ color: "#101A46" }}>{editing ? "עריכת הוצאה" : "פרטי ההוצאה"}</h3>
+            </div>
+
+            {!editing ? (
+              <>
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-between text-[13px]">
+                    <span style={{ color: LH.onSurfaceVariant }}>סכום</span>
+                    <span className="font-bold tabular-nums" style={{ color: "#101A46" }}>{money(detailEntry.cardAmount + (detailEntry.personalTopUp || 0))}</span>
+                  </div>
+                  <div className="flex justify-between text-[13px]">
+                    <span style={{ color: LH.onSurfaceVariant }}>תאריך</span>
+                    <span className="font-bold" style={{ color: "#101A46" }}>{new Date(`${detailEntry.date}T00:00:00`).toLocaleDateString("he-IL")}</span>
+                  </div>
+                  {detailEntry.time && (
+                    <div className="flex justify-between text-[13px]">
+                      <span style={{ color: LH.onSurfaceVariant }}>שעה</span>
+                      <span className="font-bold" style={{ color: "#101A46" }}>{detailEntry.time}</span>
+                    </div>
+                  )}
+                  {detailEntry.note && (
+                    <div className="flex justify-between text-[13px]">
+                      <span style={{ color: LH.onSurfaceVariant }}>הערה</span>
+                      <span className="font-bold" style={{ color: "#101A46" }}>{detailEntry.note}</span>
+                    </div>
+                  )}
+                  {!!detailEntry.personalTopUp && (
+                    <div className="text-[11.5px] font-bold" style={{ color: "#DC2626" }}>
+                      <span dir="ltr">+{money(detailEntry.personalTopUp)}</span> מהאשראי האישי מעבר לתקרה
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setDetailEntry(null)} className="flex-1 h-11 rounded-2xl font-bold" style={{ background: "rgba(35,50,100,0.06)", color: LH.onSurfaceVariant }}>סגירה</button>
+                  <button onClick={startEdit} className="flex-1 h-11 rounded-2xl font-bold text-white" style={{ background: "linear-gradient(155deg,#F59E0B,#FB923C)" }}>עריכה</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className="text-[11px] font-bold block mb-1" style={{ color: LH.onSurfaceVariant }}>סכום</label>
+                  <input type="number" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} className="w-full h-12 rounded-2xl px-4 text-[18px] font-bold" style={{ background: "#fff", border: "1px solid #e4e1e6", color: "#101A46" }} />
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold block mb-1" style={{ color: LH.onSurfaceVariant }}>תאריך</label>
+                  <input
+                    type="date"
+                    value={editDate}
+                    max={todayKey}
+                    onChange={(e) => setEditDate(e.target.value || todayKey)}
+                    className="w-full h-11 rounded-2xl px-4 text-[14px]"
+                    style={{ background: "#fff", border: "1px solid #e4e1e6", color: "#101A46" }}
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold block mb-1" style={{ color: LH.onSurfaceVariant }}>הערה (אופציונלי)</label>
+                  <input type="text" value={editNote} onChange={(e) => setEditNote(e.target.value)} className="w-full h-11 rounded-2xl px-4 text-[14px]" style={{ background: "#fff", border: "1px solid #e4e1e6", color: "#101A46" }} />
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setEditing(false)} className="flex-1 h-11 rounded-2xl font-bold" style={{ background: "rgba(35,50,100,0.06)", color: LH.onSurfaceVariant }}>ביטול</button>
+                  <button onClick={saveEdit} className="flex-1 h-11 rounded-2xl font-bold text-white" style={{ background: "linear-gradient(155deg,#F59E0B,#FB923C)" }}>שמירה</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* PIN gate before deleting a food expense */}
+      {pinPromptOpen && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center px-6" style={{ background: "rgba(16,26,70,0.55)", backdropFilter: "blur(4px)" }} onClick={() => setPinPromptOpen(false)}>
+          <div
+            className="lh-rise w-full max-w-[340px] rounded-[32px] p-6 flex flex-col gap-4"
+            style={{ background: "rgba(255,255,255,0.97)", backdropFilter: "blur(30px)", boxShadow: "0 30px 70px -15px rgba(16,26,70,0.35)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(220,38,38,0.1)" }}>
+                <span className="material-symbols-outlined" style={{ color: "#DC2626" }}>lock</span>
+              </div>
+              <h3 className="text-[15px] font-bold" style={{ color: "#101A46" }}>אימות PIN למחיקה</h3>
+            </div>
+            <input
+              type="password"
+              inputMode="numeric"
+              maxLength={8}
+              autoFocus
+              value={pinPromptValue}
+              onChange={(e) => setPinPromptValue(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void confirmDeleteWithPin()}
+              placeholder="PIN שחזור"
+              className="w-full h-12 rounded-2xl px-4 text-[18px] font-bold text-center"
+              style={{ background: "#fff", border: "1px solid #e4e1e6", color: "#101A46" }}
+            />
+            <div className="flex gap-2">
+              <button onClick={() => setPinPromptOpen(false)} className="flex-1 h-11 rounded-2xl font-bold" style={{ background: "rgba(35,50,100,0.06)", color: LH.onSurfaceVariant }}>ביטול</button>
+              <button
+                disabled={pinPromptBusy}
+                onClick={() => void confirmDeleteWithPin()}
+                className="flex-1 h-11 rounded-2xl font-bold text-white disabled:opacity-60"
+                style={{ background: "linear-gradient(155deg,#DC2626,#F87171)" }}
+              >
+                {pinPromptBusy ? "בודק..." : "מחיקה"}
+              </button>
             </div>
           </div>
         </div>

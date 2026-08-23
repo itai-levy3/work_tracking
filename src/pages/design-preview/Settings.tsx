@@ -25,7 +25,8 @@ import {
 } from "@/lib/localData";
 import { exportAnnualPayslipPdf, exportMonthlyPayslipPdf } from "@/lib/pdfExport";
 import { getCurrentUserEmail, isLocalAuthenticated, logoutLocalAuth } from "@/lib/localAuth";
-import { getRecoveryQuestionIds, hasRecoverySetup, questionTextFor, resetPinWithSecurityAnswers, saveRecoverySetup, SECURITY_QUESTIONS } from "@/lib/recoveryAuth";
+import { checkSecurityAnswer, getRecoveryQuestionIds, hasRecoverySetup, lockAccount, saveRecoverySetup, SECURITY_QUESTIONS } from "@/lib/recoveryAuth";
+import { SecurityChallenge } from "./SecurityChallenge";
 import { LH } from "./tokens";
 import { LHHeader, LHBottomNav, globalStyle } from "./Shared";
 
@@ -205,7 +206,6 @@ export default function DesignPreviewSettings() {
   const [recoveryConfigured, setRecoveryConfigured] = useState(false);
   const [recoveryChallengeOpen, setRecoveryChallengeOpen] = useState(false);
   const [recoveryChallengeQuestionIds, setRecoveryChallengeQuestionIds] = useState<string[]>([]);
-  const [recoveryChallengeAnswers, setRecoveryChallengeAnswers] = useState<Record<string, string>>({});
   const [recoveryDialogOpen, setRecoveryDialogOpen] = useState(false);
   const [recoveryPinDraft, setRecoveryPinDraft] = useState("");
   const [recoveryPinConfirmDraft, setRecoveryPinConfirmDraft] = useState("");
@@ -410,42 +410,42 @@ export default function DesignPreviewSettings() {
       setRecoveryDialogOpen(true);
       return;
     }
-    // Already configured — require answering all 3 of the existing security questions (exactly
-    // the same verification used for "forgot PIN" on the login screen) before replacing them.
+    // Already configured — require passing the same sequential security-question challenge used
+    // for "forgot PIN" on the login screen before replacing them.
     const email = getCurrentUserEmail();
     if (!email) return;
-    const ids = await getRecoveryQuestionIds(email);
-    if (!ids) {
+    const status = await getRecoveryQuestionIds(email);
+    if (!status) {
       toast.error("לא נמצא שחזור מוגדר");
       return;
     }
-    setRecoveryChallengeQuestionIds(ids);
-    setRecoveryChallengeAnswers({});
+    if (status.locked) {
+      toast.error("החשבון נעול לאחר יותר מדי טעויות — יש להתנתק ולשחזר אותו דרך \"שכחתי סיסמה\"");
+      return;
+    }
+    setRecoveryChallengeQuestionIds(status.questionIds);
     setRecoveryChallengeOpen(true);
   };
 
-  const submitRecoveryChallenge = async () => {
+  const recoveryChallengeAttempt = (questionId: string, answer: string) => {
     const email = getCurrentUserEmail();
-    if (!email) return;
-    if (recoveryChallengeQuestionIds.some((id) => !recoveryChallengeAnswers[id]?.trim())) {
-      toast.error("יש למלא תשובה לכל שאלה");
-      return;
-    }
-    // Verified by successfully resetting the PIN to a throwaway value via the same secure
-    // Edge Function used for "forgot PIN" — the real new PIN/questions are chosen right after.
-    const throwawayPin = String(Math.floor(1000 + Math.random() * 9000));
-    const result = await resetPinWithSecurityAnswers(
-      email,
-      recoveryChallengeQuestionIds.map((id) => ({ questionId: id, answer: recoveryChallengeAnswers[id] || "" })),
-      throwawayPin,
-    );
-    if (!result.ok) {
-      toast.error(result.message || "תשובות שגויות");
-      return;
-    }
+    if (!email) return Promise.resolve({ ok: false });
+    // No newPin passed — this challenge only confirms identity; the real new PIN/questions are
+    // chosen in the dialog that opens right after (saveRecoverySetup overwrites everything).
+    return checkSecurityAnswer(email, questionId, answer);
+  };
+
+  const recoveryChallengeSuccess = () => {
     setRecoveryChallengeOpen(false);
     resetRecoveryDraft();
     setRecoveryDialogOpen(true);
+  };
+
+  const recoveryChallengeLocked = async () => {
+    const email = getCurrentUserEmail();
+    if (email) await lockAccount(email);
+    setRecoveryChallengeOpen(false);
+    toast.error("החשבון ננעל לאחר יותר מדי טעויות — יש להתנתק ולשחזר אותו דרך \"שכחתי סיסמה\" במסך ההתחברות");
   };
 
   const saveRecoveryDraft = async () => {
@@ -1098,9 +1098,10 @@ export default function DesignPreviewSettings() {
                   step="0.5"
                   min="0"
                   max="24"
-                  value={hoursPerDayDraft[d.key] ?? 0}
+                  value={zeroToEmpty(hoursPerDayDraft[d.key] ?? 0)}
                   onChange={(e) => setHoursPerDayDraft((prev) => ({ ...prev, [d.key]: parseFloat(e.target.value) || 0 }))}
                   disabled={!workDaysDraft[d.key]}
+                  placeholder="0"
                   style={{ ...dialogFieldStyle, width: 72, textAlign: "center", padding: "8px 6px" }}
                 />
               </div>
@@ -1503,21 +1504,14 @@ export default function DesignPreviewSettings() {
           <DialogHeader>
             <DialogTitle style={{ color: LH.onSurface }}>אימות זהות</DialogTitle>
           </DialogHeader>
-          <div className="flex flex-col gap-4">
-            <p className="text-[12px]" style={{ color: LH.onSurfaceVariant }}>כדי לשנות PIN ושאלות אבטחה קיימים, יש לענות קודם על שלוש שאלות האבטחה שכבר הגדרת.</p>
-            {recoveryChallengeQuestionIds.map((id) => (
-              <div key={id}>
-                <label className="text-[11px] font-medium block mb-1" style={{ color: LH.onSurfaceVariant }}>{questionTextFor(id)}</label>
-                <input
-                  type="text"
-                  value={recoveryChallengeAnswers[id] || ""}
-                  onChange={(e) => setRecoveryChallengeAnswers((prev) => ({ ...prev, [id]: e.target.value }))}
-                  style={dialogFieldStyle}
-                />
-              </div>
-            ))}
-          </div>
-          <button onClick={submitRecoveryChallenge} className="w-full h-11 rounded-xl font-bold text-white mt-2" style={{ background: LH.primary }}>אימות והמשך</button>
+          <p className="text-[12px] -mt-2 mb-2" style={{ color: LH.onSurfaceVariant }}>כדי לשנות PIN ושאלות אבטחה קיימים, יש לענות קודם נכון על אחת משאלות האבטחה שכבר הגדרת.</p>
+          <SecurityChallenge
+            questionIds={recoveryChallengeQuestionIds}
+            fieldStyle={dialogFieldStyle}
+            onAttempt={recoveryChallengeAttempt}
+            onSuccess={recoveryChallengeSuccess}
+            onLocked={() => void recoveryChallengeLocked()}
+          />
         </DialogContent>
       </Dialog>
 

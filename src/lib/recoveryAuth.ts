@@ -79,13 +79,19 @@ export const hasRecoverySetup = async (): Promise<boolean> => {
   return !!data;
 };
 
-/** Unauthenticated step 1 of "forgot the PIN" — which 3 question ids this email chose. Also
- * used by the Settings "change PIN/questions" flow, since answering these same 3 questions is
- * how a signed-in user re-verifies ownership before replacing them. */
-export const getRecoveryQuestionIds = async (email: string): Promise<string[] | null> => {
+export interface RecoveryQuestionsStatus {
+  questionIds: string[];
+  locked: boolean;
+}
+
+/** Unauthenticated step 1 of "forgot the PIN" — which 3 question ids this email chose, and
+ * whether the account is currently locked (too many wrong answers). Also used by the Settings
+ * "change PIN/questions" flow, since answering these same questions is how a signed-in user
+ * re-verifies ownership before replacing them. */
+export const getRecoveryQuestionIds = async (email: string): Promise<RecoveryQuestionsStatus | null> => {
   const { data, error } = await supabase.functions.invoke("account-recovery", { body: { type: "get_questions", email } });
   if (error || !data?.ok) return null;
-  return data.questionIds as string[];
+  return { questionIds: data.questionIds as string[], locked: !!data.locked };
 };
 
 /** Forgot password, but still remember the PIN — the PIN alone resets the login password. */
@@ -98,13 +104,52 @@ export const resetPasswordWithPin = async (email: string, pin: string, newPasswo
   return data as { ok: boolean; message?: string };
 };
 
-/** Forgot the PIN itself — the 3 security-question answers alone reset the PIN (the login
- * password is untouched; the user then uses the new PIN to reset the password as usual). */
-export const resetPinWithSecurityAnswers = async (email: string, answers: SecurityAnswerInput[], newPin: string): Promise<{ ok: boolean; message?: string }> => {
+/** Gates a sensitive in-app action (e.g. deleting a food expense) behind the recovery PIN,
+ * without changing anything. */
+export const verifyPin = async (email: string, pin: string): Promise<boolean> => {
+  const pinHash = await hashRecoveryValue(pin, email);
+  const { data, error } = await supabase.functions.invoke("account-recovery", { body: { type: "verify_pin", email, pinHash } });
+  if (error) return false;
+  return !!data?.ok;
+};
+
+export interface ChallengeResult {
+  ok: boolean;
+  locked?: boolean;
+}
+
+/** One step of the sequential "forgot the PIN" challenge — verifies a single question's answer.
+ * Wrong answers accumulate server-side and eventually lock the account. Pass `newPin` once the
+ * user has chosen their replacement PIN (asked for up front, before the first question) so a
+ * correct answer both verifies identity and commits the new PIN in the same round trip. */
+export const checkSecurityAnswer = async (email: string, questionId: string, answer: string, newPin?: string): Promise<ChallengeResult> => {
+  const answerHash = await hashRecoveryValue(answer, email);
+  const newPinHash = newPin ? await hashRecoveryValue(newPin, email) : undefined;
+  const { data, error } = await supabase.functions.invoke("account-recovery", {
+    body: { type: "check_answer", email, questionId, answerHash, newPinHash },
+  });
+  if (error) return { ok: false };
+  return data as ChallengeResult;
+};
+
+/** The final question's 90-second countdown ran out before a correct answer — locks the account
+ * immediately instead of waiting for a wrong answer to trigger it. */
+export const lockAccount = async (email: string): Promise<void> => {
+  await supabase.functions.invoke("account-recovery", { body: { type: "lock_account", email } });
+};
+
+/** Recovers a locked account: all 3 security-question answers must be correct at once, and on
+ * success both a new login password and a new PIN are set in the same step. */
+export const unlockAccount = async (
+  email: string,
+  answers: SecurityAnswerInput[],
+  newPassword: string,
+  newPin: string,
+): Promise<{ ok: boolean; message?: string }> => {
   const answerHashes = await Promise.all(answers.map(async (a) => ({ questionId: a.questionId, hash: await hashRecoveryValue(a.answer, email) })));
   const newPinHash = await hashRecoveryValue(newPin, email);
   const { data, error } = await supabase.functions.invoke("account-recovery", {
-    body: { type: "reset_pin", email, answerHashes, newPinHash },
+    body: { type: "unlock", email, answerHashes, newPassword, newPinHash },
   });
   if (error) return { ok: false, message: "שגיאת תקשורת עם השרת" };
   return data as { ok: boolean; message?: string };

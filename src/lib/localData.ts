@@ -978,6 +978,13 @@ export const addFoodEntry = (entry: FoodEntry) => {
   void pushFoodEntry(entry);
 };
 
+export const updateFoodEntry = (entry: FoodEntry) => {
+  const data = readData();
+  data.foodEntries = (data.foodEntries || []).map((e) => (e.id === entry.id ? entry : e));
+  writeData(data);
+  void pushFoodEntry(entry);
+};
+
 export const deleteFoodEntry = (id: string) => {
   const data = readData();
   data.foodEntries = (data.foodEntries || []).filter((e) => e.id !== id);
