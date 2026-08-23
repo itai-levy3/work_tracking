@@ -28,10 +28,13 @@ export default function DesignPreviewSchedule() {
       return;
     }
     isFullyAuthenticated().then((ok) => {
-      if (!ok) navigate("/design-preview/login");
+      if (!ok) {
+        navigate("/design-preview/login");
+        return;
+      }
+      setSettings(getSettings());
+      setLoading(false);
     });
-    setSettings(getSettings());
-    setLoading(false);
   }, [navigate]);
 
   const refresh = () => {

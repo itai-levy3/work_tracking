@@ -117,11 +117,14 @@ export default function DesignPreviewChat() {
       return;
     }
     isFullyAuthenticated().then((ok) => {
-      if (!ok) navigate("/design-preview/login");
+      if (!ok) {
+        navigate("/design-preview/login");
+        return;
+      }
+      setSettings(getSettings());
+      setFirstName(getProfileFirstName());
+      setLoading(false);
     });
-    setSettings(getSettings());
-    setFirstName(getProfileFirstName());
-    setLoading(false);
   }, [navigate]);
 
   useEffect(() => {

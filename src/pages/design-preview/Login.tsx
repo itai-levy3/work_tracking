@@ -109,6 +109,9 @@ export default function DesignPreviewLogin() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<Mode>("login");
   const [loading, setLoading] = useState(false);
+  // Starts true whenever a cached session might exist, so the plain login form never flashes for
+  // an instant before the recovery-setup check redirects or switches mode.
+  const [checkingSession, setCheckingSession] = useState(() => isLocalAuthenticated());
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -157,8 +160,12 @@ export default function DesignPreviewLogin() {
     const currentEmail = getCurrentUserEmail();
     if (currentEmail) setEmail(currentEmail);
     hasRecoverySetup().then((configured) => {
-      if (configured) navigate("/design-preview");
-      else setMode("recovery_setup");
+      if (configured) {
+        navigate("/design-preview");
+        return;
+      }
+      setMode("recovery_setup");
+      setCheckingSession(false);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -329,6 +336,14 @@ export default function DesignPreviewLogin() {
     : mode === "reset_pw_email" ? "שחזור סיסמה"
     : mode === "reset_pw_verify" ? "איפוס סיסמה עם PIN"
     : "שכחת גם את ה-PIN?";
+
+  if (checkingSession) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: LH.background }}>
+        <div className="w-12 h-12 rounded-full border-2 animate-spin" style={{ borderColor: `${LH.primary}33`, borderTopColor: LH.primary }} />
+      </div>
+    );
+  }
 
   return (
     <div

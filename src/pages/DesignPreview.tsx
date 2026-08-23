@@ -60,15 +60,19 @@ export default function DesignPreview() {
       return;
     }
     // A session existing isn't enough — the mandatory PIN/security-questions step may still be
-    // unfinished (e.g. abandoned mid-signup); no authenticated page may be reachable until it is.
+    // unfinished (e.g. abandoned mid-signup). Content only renders once this resolves true, so an
+    // unauthorized visitor never sees even a flash of real data before being redirected away.
     isFullyAuthenticated().then((ok) => {
-      if (!ok) navigate("/design-preview/login");
+      if (!ok) {
+        navigate("/design-preview/login");
+        return;
+      }
+      const s = getSettings();
+      setSettings(s);
+      setFirstName(getProfileFirstName());
+      loadMonth(currentMonth, s);
+      setLoading(false);
     });
-    const s = getSettings();
-    setSettings(s);
-    setFirstName(getProfileFirstName());
-    loadMonth(currentMonth, s);
-    setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

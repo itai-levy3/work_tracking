@@ -217,15 +217,18 @@ export default function DesignPreviewSettings() {
       navigate("/design-preview/login");
       return;
     }
-    const s = getSettings();
-    setSettings(s);
-    setFirstName(getProfileFirstName());
-    setPdfArchive(getPdfArchive());
     void hasRecoverySetup().then((configured) => {
       setRecoveryConfigured(configured);
-      if (!configured) navigate("/design-preview/login");
+      if (!configured) {
+        navigate("/design-preview/login");
+        return;
+      }
+      const s = getSettings();
+      setSettings(s);
+      setFirstName(getProfileFirstName());
+      setPdfArchive(getPdfArchive());
+      setLoading(false);
     });
-    setLoading(false);
   }, [navigate]);
 
   const persist = (next: UserSettings) => {

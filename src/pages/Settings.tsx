@@ -52,9 +52,12 @@ export default function Settings() {
       return;
     }
     isFullyAuthenticated().then((ok) => {
-      if (!ok) navigate("/design-preview/login");
+      if (!ok) {
+        navigate("/design-preview/login");
+        return;
+      }
+      loadSettings();
     });
-    loadSettings();
   }, []);
 
   const loadSettings = async () => {
