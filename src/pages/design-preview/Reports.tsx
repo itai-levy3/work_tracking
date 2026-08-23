@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { isLocalAuthenticated } from "@/lib/localAuth";
+import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import {
   computeEffectiveHourlyRateForMonth,
   computeMonthlyPayroll,
@@ -29,6 +29,9 @@ export default function DesignPreviewReports() {
       navigate("/design-preview/login");
       return;
     }
+    isFullyAuthenticated().then((ok) => {
+      if (!ok) navigate("/design-preview/login");
+    });
     setSettings(getSettings());
     setLoading(false);
   }, [navigate]);

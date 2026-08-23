@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import jsPDF from "jspdf";
 import { format } from "date-fns";
 import { exportLocalBackup, getSettings, getWorkHoursForMonth, importLocalBackup, LocalBackupFile, replaceCurrentUserData, saveSettings, UserSettings, WorkHour } from "@/lib/localData";
-import { isLocalAuthenticated } from "@/lib/localAuth";
+import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 
 const daysOfWeek = [
   { key: "monday", label: "יום שני", emoji: "📅" },
@@ -51,6 +51,9 @@ export default function Settings() {
       navigate("/");
       return;
     }
+    isFullyAuthenticated().then((ok) => {
+      if (!ok) navigate("/design-preview/login");
+    });
     loadSettings();
   }, []);
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import { isLocalAuthenticated } from "@/lib/localAuth";
+import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import { addFoodEntry, deleteFoodEntry, enableFoodTracking, FoodEntry, getFoodEntriesForMonth, getSettings, UserSettings } from "@/lib/localData";
 import { checkDailyCap, computeFoodMonthSummary, splitByDailyCap } from "@/lib/foodCard";
 import { LH } from "./tokens";
@@ -59,6 +59,9 @@ export default function DesignPreviewFood() {
       navigate("/design-preview/login");
       return;
     }
+    isFullyAuthenticated().then((ok) => {
+      if (!ok) navigate("/design-preview/login");
+    });
     setSettings(getSettings());
     setLoading(false);
   }, [navigate]);

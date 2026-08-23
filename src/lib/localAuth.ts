@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabaseClient";
+import { hasRecoverySetup } from "@/lib/recoveryAuth";
 
 // The actual credential check (password hashing, sessions, password-reset emails) is now owned
 // entirely by Supabase Auth. This module keeps a synchronous, locally-cached "who's logged in"
@@ -19,6 +20,17 @@ export const getCurrentUserEmail = (): string | null => {
 };
 
 export const isLocalAuthenticated = (): boolean => !!getCurrentUserEmail();
+
+/**
+ * Gate for every authenticated page (not just the login screen): a session existing is not
+ * enough — the PIN/security-questions step is mandatory, so a session created mid-signup but
+ * abandoned before finishing that step must still be treated as "not allowed in yet" everywhere,
+ * however the page was reached (direct link, browser back, a stale tab).
+ */
+export const isFullyAuthenticated = async (): Promise<boolean> => {
+  if (!isLocalAuthenticated()) return false;
+  return hasRecoverySetup();
+};
 
 export const setupLocalAuth = async (email: string, password: string): Promise<{ needsEmailConfirmation: boolean }> => {
   const normalizedEmail = normalizeEmail(email);

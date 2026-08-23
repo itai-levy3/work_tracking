@@ -1,7 +1,7 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { loginLocalAuth, setupLocalAuth } from "@/lib/localAuth";
+import { getCurrentUserEmail, isLocalAuthenticated, loginLocalAuth, logoutLocalAuth, setupLocalAuth } from "@/lib/localAuth";
 import { getRecoveryQuestionIds, hasRecoverySetup, questionTextFor, resetPasswordWithPin, resetPinWithSecurityAnswers, saveRecoverySetup, SECURITY_QUESTIONS } from "@/lib/recoveryAuth";
 import { LH } from "./tokens";
 import { globalStyle } from "./Shared";
@@ -147,6 +147,28 @@ export default function DesignPreviewLogin() {
   const switchMode = (next: Mode) => {
     resetAllFields();
     setMode(next);
+  };
+
+  // A session can exist here (page loaded fresh, browser back, a stale tab) without the mandatory
+  // PIN/security-questions step ever having been finished — that must always land back on
+  // recovery_setup, never silently let the visitor through to the login form as if signed out.
+  useEffect(() => {
+    if (!isLocalAuthenticated()) return;
+    const currentEmail = getCurrentUserEmail();
+    if (currentEmail) setEmail(currentEmail);
+    hasRecoverySetup().then((configured) => {
+      if (configured) navigate("/design-preview");
+      else setMode("recovery_setup");
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Abandons the incomplete signup outright instead of leaving it in limbo — signs out and
+  // returns to a clean signup form, which is the only way "back" from this step can behave
+  // without ever being able to slip into the app itself.
+  const abandonRecoverySetup = async () => {
+    await logoutLocalAuth();
+    switchMode("setup");
   };
 
   const handleSetup = async (e: FormEvent) => {
@@ -382,6 +404,10 @@ export default function DesignPreviewLogin() {
               <SecurityQuestionsPicker selectedIds={questionIds} answers={questionAnswers} onChangeQuestion={setQuestionId} onChangeAnswer={setQuestionAnswer} />
               <button disabled={loading} className="w-full h-12 rounded-2xl font-bold text-white mt-1" style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 16px 32px -10px rgba(118,57,255,0.5)" }}>
                 {loading ? "שומר..." : "שמירה וכניסה"}
+              </button>
+              <button type="button" onClick={() => void abandonRecoverySetup()} className="flex items-center justify-center gap-1 text-[13px] font-medium" style={{ color: LH.onSurfaceVariant }}>
+                <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
+                חזרה — לא עכשיו
               </button>
             </form>
           )}

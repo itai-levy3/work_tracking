@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { isLocalAuthenticated } from "@/lib/localAuth";
+import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
+import { askAiAssistant } from "@/lib/aiAssistant";
 import {
   computeCumulativeAccrued,
   computeCumulativeLeaveUsage,
@@ -34,11 +35,11 @@ const quickQuestions: { text: string; icon: string }[] = [
 const money = (n: number) => `₪${Math.round(n).toLocaleString("he-IL")}`;
 
 /**
- * Local, rule-based assistant — answers direct questions about the user's real data
- * without any external AI. Freeform strategic/planning questions (the kind that need
- * real reasoning) get an honest "not connected yet" response instead of a fake answer.
+ * Local, rule-based fast path — answers direct questions about the user's real data instantly
+ * and without any network call. Returns null when the question doesn't match a known pattern, so
+ * the caller can fall back to the real AI assistant (see askAiAssistant) for freeform questions.
  */
-function answerQuery(query: string, settings: UserSettings): string {
+function answerQueryLocal(query: string, settings: UserSettings): string | null {
   const q = query.trim();
   const now = new Date();
   const monthWorkHours = getWorkHoursForMonth(now.getFullYear(), now.getMonth());
@@ -98,7 +99,7 @@ function answerQuery(query: string, settings: UserSettings): string {
     return `עבדת החודש ${formatHM(totalWorked)} שעות.`;
   }
 
-  return "זו שאלה שדורשת חשיבה ותכנון אמיתי (למשל לפזר שעות נוספות בצורה הכי הגיונית) — לזה אני צריך להתחבר למודל AI אמיתי, וזה עוד לא חובר. בינתיים אפשר לשאול אותי ישירות על הנתונים שלך — למשל אחת השאלות למטה.";
+  return null;
 }
 
 export default function DesignPreviewChat() {
@@ -115,6 +116,9 @@ export default function DesignPreviewChat() {
       navigate("/design-preview/login");
       return;
     }
+    isFullyAuthenticated().then((ok) => {
+      if (!ok) navigate("/design-preview/login");
+    });
     setSettings(getSettings());
     setFirstName(getProfileFirstName());
     setLoading(false);
@@ -126,7 +130,7 @@ export default function DesignPreviewChat() {
         {
           id: 0,
           from: "bot",
-          text: `היי ${firstName}! אני עוזר מקומי שיודע לענות על שאלות ישירות על החופש, המחלה, השעות הנוספות והשכר שלך — ישירות מהנתונים באפליקציה, בלי חיבור לאינטרנט. שאלות אסטרטגיות מורכבות ידרשו בעתיד חיבור למודל AI אמיתי.`,
+          text: `היי ${firstName}! אני יודע לענות על שאלות ישירות על החופש, המחלה, השעות הנוספות והשכר שלך — ולכל שאלה אחרת יש לי גם חיבור למודל AI אמיתי.`,
         },
       ]);
     }
@@ -137,12 +141,27 @@ export default function DesignPreviewChat() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const send = (text: string) => {
+  const send = async (text: string) => {
     if (!text.trim() || !settings) return;
     const userMsg: Msg = { id: Date.now(), from: "user", text };
-    const botMsg: Msg = { id: Date.now() + 1, from: "bot", text: answerQuery(text, settings) };
-    setMessages((prev) => [...prev, userMsg, botMsg]);
+    setMessages((prev) => [...prev, userMsg]);
     setInput("");
+
+    const localAnswer = answerQueryLocal(text, settings);
+    if (localAnswer) {
+      setMessages((prev) => [...prev, { id: Date.now() + 1, from: "bot", text: localAnswer }]);
+      return;
+    }
+
+    const thinkingId = Date.now() + 1;
+    setMessages((prev) => [...prev, { id: thinkingId, from: "bot", text: "חושב/ת..." }]);
+    try {
+      const aiAnswer = await askAiAssistant(text);
+      setMessages((prev) => prev.map((m) => (m.id === thinkingId ? { ...m, text: aiAnswer } : m)));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "שגיאה בשירות ה-AI";
+      setMessages((prev) => prev.map((m) => (m.id === thinkingId ? { ...m, text: message } : m)));
+    }
   };
 
   if (loading || !settings) {
@@ -218,7 +237,7 @@ export default function DesignPreviewChat() {
               </h1>
               <div className="flex items-center gap-1.5 mt-1">
                 <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#19CEA0" }} />
-                <span className="text-[11px] font-bold tracking-[0.06em]" style={{ color: LH.onSurfaceVariant }}>מבוסס נתונים מקומיים · ללא OpenAI (עדיין)</span>
+                <span className="text-[11px] font-bold tracking-[0.06em]" style={{ color: LH.onSurfaceVariant }}>נתונים מקומיים · מחובר ל-AI</span>
               </div>
             </div>
           </div>

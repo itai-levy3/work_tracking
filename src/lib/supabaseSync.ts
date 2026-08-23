@@ -270,25 +270,3 @@ export const pullAllFromSupabase = async (): Promise<PulledData | null> => {
     ),
   };
 };
-
-// ---- full reset (Settings "איפוס נתונים") ----
-
-/**
- * Deletes every WorkTrack row belonging to the current user (settings, work hours, food entries,
- * PDF archive, recovery credentials) without touching auth.users at all — the login itself is
- * shared with the user's other apps on this Supabase project, so it must never be deleted here.
- * RLS (`auth.uid() = user_id`) means this can only ever delete the caller's own rows.
- */
-export const resetAllCloudData = async (): Promise<void> => {
-  const userId = await getUserId();
-  if (!userId) throw new Error("NOT_AUTHENTICATED");
-  const results = await Promise.all([
-    supabase.from("recovery_credentials").delete().eq("user_id", userId),
-    supabase.from("pdf_archive").delete().eq("user_id", userId),
-    supabase.from("food_entries").delete().eq("user_id", userId),
-    supabase.from("work_hours").delete().eq("user_id", userId),
-    supabase.from("settings").delete().eq("user_id", userId),
-  ]);
-  const failed = results.find((r) => r.error);
-  if (failed?.error) throw failed.error;
-};

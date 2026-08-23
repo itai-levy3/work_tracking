@@ -19,10 +19,9 @@ import {
   UserSettings,
   WorkHour,
 } from "@/lib/localData";
-import { isLocalAuthenticated } from "@/lib/localAuth";
+import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import { LHBottomNav } from "./design-preview/Shared";
 import { DayDetailModal } from "./design-preview/DayDetailModal";
-import { AiAssistant } from "./design-preview/AiAssistant";
 import { STATUS_META } from "./design-preview/tokens";
 
 /** Every KPI ring expands to exactly this outer diameter (bezel included) when hovered/tapped. */
@@ -60,6 +59,11 @@ export default function DesignPreview() {
       navigate("/design-preview/login");
       return;
     }
+    // A session existing isn't enough — the mandatory PIN/security-questions step may still be
+    // unfinished (e.g. abandoned mid-signup); no authenticated page may be reachable until it is.
+    isFullyAuthenticated().then((ok) => {
+      if (!ok) navigate("/design-preview/login");
+    });
     const s = getSettings();
     setSettings(s);
     setFirstName(getProfileFirstName());
@@ -1008,7 +1012,6 @@ export default function DesignPreview() {
       </main>
 
       <LHBottomNav active="home" foodEnabled={!!settings.food_card_enabled} />
-      <AiAssistant />
 
       <DayDetailModal
         date={dayModalDate}

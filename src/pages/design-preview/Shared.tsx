@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { getProfileFirstName } from "@/lib/localData";
 import { LH } from "./tokens";
 
 export const globalStyle = `
@@ -30,7 +31,7 @@ export function LHHeader() {
           <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: LH.primary, boxShadow: `0 10px 20px -6px ${LH.primary}4D` }}>
             <span className="material-symbols-outlined text-white text-[20px]">person</span>
           </div>
-          <span className="text-[17px] leading-6 font-bold" style={{ color: LH.onSurface }}>שלום, איתי</span>
+          <span className="text-[17px] leading-6 font-bold" style={{ color: LH.onSurface }}>שלום, {getProfileFirstName()}</span>
         </div>
         <button className="w-11 h-11 flex items-center justify-center rounded-full hover:bg-[#f0edf1] transition-colors duration-300">
           <span className="material-symbols-outlined text-[24px]" style={{ color: LH.onSurfaceVariant }}>notifications</span>

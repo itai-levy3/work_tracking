@@ -18,7 +18,6 @@ import {
   OvertimeTier,
   PayLineItem,
   replaceCurrentUserData,
-  resetCurrentUserLocalData,
   saveSettings,
   setProfileFirstName,
   UserSettings,
@@ -27,7 +26,6 @@ import {
 import { exportAnnualPayslipPdf, exportMonthlyPayslipPdf } from "@/lib/pdfExport";
 import { getCurrentUserEmail, isLocalAuthenticated, logoutLocalAuth } from "@/lib/localAuth";
 import { getRecoveryQuestionIds, hasRecoverySetup, questionTextFor, resetPinWithSecurityAnswers, saveRecoverySetup, SECURITY_QUESTIONS } from "@/lib/recoveryAuth";
-import { resetAllCloudData } from "@/lib/supabaseSync";
 import { LH } from "./tokens";
 import { LHHeader, LHBottomNav, globalStyle } from "./Shared";
 
@@ -214,10 +212,6 @@ export default function DesignPreviewSettings() {
   const [recoveryQuestionIdsDraft, setRecoveryQuestionIdsDraft] = useState<[string, string, string]>([SECURITY_QUESTIONS[0].id, SECURITY_QUESTIONS[1].id, SECURITY_QUESTIONS[2].id]);
   const [recoveryAnswersDraft, setRecoveryAnswersDraft] = useState<[string, string, string]>(["", "", ""]);
 
-  const [resetDataDialogOpen, setResetDataDialogOpen] = useState(false);
-  const [resetDataConfirmText, setResetDataConfirmText] = useState("");
-  const [resetDataBusy, setResetDataBusy] = useState(false);
-
   useEffect(() => {
     if (!isLocalAuthenticated()) {
       navigate("/design-preview/login");
@@ -227,7 +221,10 @@ export default function DesignPreviewSettings() {
     setSettings(s);
     setFirstName(getProfileFirstName());
     setPdfArchive(getPdfArchive());
-    void hasRecoverySetup().then(setRecoveryConfigured);
+    void hasRecoverySetup().then((configured) => {
+      setRecoveryConfigured(configured);
+      if (!configured) navigate("/design-preview/login");
+    });
     setLoading(false);
   }, [navigate]);
 
@@ -466,25 +463,6 @@ export default function DesignPreviewSettings() {
       toast.success("שחזור הסיסמה עודכן");
     } catch {
       toast.error("שגיאה בשמירת שחזור הסיסמה");
-    }
-  };
-
-  const submitResetAllData = async () => {
-    if (resetDataConfirmText.trim() !== "איפוס") {
-      toast.error('יש להקליד בדיוק "איפוס" כדי לאשר');
-      return;
-    }
-    setResetDataBusy(true);
-    try {
-      await resetAllCloudData();
-      resetCurrentUserLocalData();
-      toast.success("כל הנתונים אופסו — ההתחברות שלך נשארה פעילה");
-      setResetDataDialogOpen(false);
-      window.location.href = "/design-preview";
-    } catch {
-      toast.error("שגיאה באיפוס הנתונים");
-    } finally {
-      setResetDataBusy(false);
     }
   };
 
@@ -966,18 +944,6 @@ export default function DesignPreviewSettings() {
               </div>
             )}
           </div>
-
-          <button
-            onClick={() => {
-              setResetDataConfirmText("");
-              setResetDataDialogOpen(true);
-            }}
-            className="w-full h-12 rounded-2xl font-bold flex items-center justify-center gap-2 mb-3"
-            style={{ background: `${LH.error}0D`, color: LH.error }}
-          >
-            <span className="material-symbols-outlined text-[18px]">delete_forever</span>
-            איפוס כל הנתונים
-          </button>
 
           <button
             onClick={async () => {
@@ -1603,38 +1569,6 @@ export default function DesignPreviewSettings() {
             ))}
           </div>
           <button onClick={saveRecoveryDraft} className="w-full h-11 rounded-xl font-bold text-white mt-4" style={{ background: LH.primary }}>שמירה</button>
-        </DialogContent>
-      </Dialog>
-
-      {/* Full data reset — deletes settings/hours/food/PDFs/recovery for THIS account only.
-          Login itself (auth.users) is untouched since it's shared with other apps on this project. */}
-      <Dialog open={resetDataDialogOpen} onOpenChange={setResetDataDialogOpen}>
-        <DialogContent className={dialogClassName} style={{ background: LH.background, fontFamily: "'Heebo', system-ui, sans-serif" }} dir="rtl">
-          <DialogHeader>
-            <DialogTitle style={{ color: LH.error }}>איפוס כל הנתונים</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <p className="text-[13px]" style={{ color: LH.onSurface }}>
-              פעולה זו תמחק לצמיתות את כל הנתונים שלך ב-WorkTrack: הגדרות, שעות עבודה, הוצאות אוכל, תלושים שמורים ו-PIN/שאלות אבטחה. לא ניתן לבטל.
-            </p>
-            <p className="text-[12px]" style={{ color: LH.onSurfaceVariant }}>
-              ההתחברות שלך (מייל+סיסמה) תישאר פעילה — היא משותפת גם לאפליקציות אחרות שלך, ולכן לא נמחקת. אחרי האיפוס תוכל/י להגדיר הכל מחדש מאפס, כולל PIN ושאלות אבטחה, בלי להירשם שוב.
-            </p>
-            <div>
-              <label className="text-[11px] font-medium block mb-1" style={{ color: LH.onSurfaceVariant }}>
-                כדי לאשר, הקלד/י "איפוס"
-              </label>
-              <input type="text" value={resetDataConfirmText} onChange={(e) => setResetDataConfirmText(e.target.value)} style={dialogFieldStyle} />
-            </div>
-          </div>
-          <button
-            onClick={submitResetAllData}
-            disabled={resetDataBusy}
-            className="w-full h-11 rounded-xl font-bold text-white mt-4 disabled:opacity-50"
-            style={{ background: LH.error }}
-          >
-            {resetDataBusy ? "מאפס..." : "אישור איפוס לצמיתות"}
-          </button>
         </DialogContent>
       </Dialog>
     </div>

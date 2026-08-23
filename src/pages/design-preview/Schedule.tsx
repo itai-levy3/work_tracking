@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
-import { isLocalAuthenticated } from "@/lib/localAuth";
+import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import { DayStatus, getCountedHours, getSettings, getWorkHoursForMonth, UserSettings, WorkHour } from "@/lib/localData";
 import { LH, STATUS_META } from "./tokens";
 import { LHHeader, LHBottomNav, globalStyle } from "./Shared";
@@ -27,6 +27,9 @@ export default function DesignPreviewSchedule() {
       navigate("/design-preview/login");
       return;
     }
+    isFullyAuthenticated().then((ok) => {
+      if (!ok) navigate("/design-preview/login");
+    });
     setSettings(getSettings());
     setLoading(false);
   }, [navigate]);
