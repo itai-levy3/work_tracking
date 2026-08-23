@@ -399,8 +399,8 @@ export default function DesignPreviewLogin() {
               <p className="text-[12.5px] -mt-1" style={{ color: LH.onSurfaceVariant }}>
                 אם תשכח/י את הסיסמה, תוכל/י לשחזר אותה עם ה-PIN והתשובות האלה — בלי צורך במייל.
               </p>
-              <SecretField label="בחר/י PIN (4-8 ספרות)" icon="pin" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value)} required />
-              <SecretField label="אימות PIN" icon="pin" inputMode="numeric" value={confirmPin} onChange={(e) => setConfirmPin(e.target.value)} required />
+              <SecretField label="בחר/י PIN (4-8 ספרות)" icon="pin" inputMode="numeric" maxLength={8} value={pin} onChange={(e) => setPin(e.target.value)} required />
+              <SecretField label="אימות PIN" icon="pin" inputMode="numeric" maxLength={8} value={confirmPin} onChange={(e) => setConfirmPin(e.target.value)} required />
               <SecurityQuestionsPicker selectedIds={questionIds} answers={questionAnswers} onChangeQuestion={setQuestionId} onChangeAnswer={setQuestionAnswer} />
               <button disabled={loading} className="w-full h-12 rounded-2xl font-bold text-white mt-1" style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 16px 32px -10px rgba(118,57,255,0.5)" }}>
                 {loading ? "שומר..." : "שמירה וכניסה"}
@@ -440,7 +440,7 @@ export default function DesignPreviewLogin() {
 
           {mode === "reset_pw_verify" && (
             <form onSubmit={handleResetPwVerifySubmit} className="flex flex-col gap-4">
-              <SecretField label="PIN" icon="pin" inputMode="numeric" value={resetPin} onChange={(e) => setResetPin(e.target.value)} required />
+              <SecretField label="PIN" icon="pin" inputMode="numeric" maxLength={8} value={resetPin} onChange={(e) => setResetPin(e.target.value)} required />
               <SecretField label="סיסמה חדשה" icon="lock" value={resetNewPassword} onChange={(e) => setResetNewPassword(e.target.value)} required />
               <button disabled={loading} className="w-full h-12 rounded-2xl font-bold text-white mt-1" style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 16px 32px -10px rgba(118,57,255,0.5)" }}>
                 {loading ? "מעדכן..." : "איפוס סיסמה"}
@@ -471,8 +471,8 @@ export default function DesignPreviewLogin() {
                   />
                 </div>
               ))}
-              <SecretField label="PIN חדש (4-8 ספרות)" icon="pin" inputMode="numeric" value={resetNewPin} onChange={(e) => setResetNewPin(e.target.value)} required />
-              <SecretField label="אימות PIN" icon="pin" inputMode="numeric" value={resetNewPinConfirm} onChange={(e) => setResetNewPinConfirm(e.target.value)} required />
+              <SecretField label="PIN חדש (4-8 ספרות)" icon="pin" inputMode="numeric" maxLength={8} value={resetNewPin} onChange={(e) => setResetNewPin(e.target.value)} required />
+              <SecretField label="אימות PIN" icon="pin" inputMode="numeric" maxLength={8} value={resetNewPinConfirm} onChange={(e) => setResetNewPinConfirm(e.target.value)} required />
               <button disabled={loading} className="w-full h-12 rounded-2xl font-bold text-white mt-1" style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 16px 32px -10px rgba(118,57,255,0.5)" }}>
                 {loading ? "מעדכן..." : "איפוס PIN"}
               </button>

@@ -1528,11 +1528,11 @@ export default function DesignPreviewSettings() {
             <p className="text-[12px]" style={{ color: LH.onSurfaceVariant }}>אם תשכח/י את הסיסמה, תוכל/י לשחזר אותה עם ה-PIN והתשובות האלה — בלי צורך במייל.</p>
             <div>
               <label className="text-[11px] font-medium block mb-1" style={{ color: LH.onSurfaceVariant }}>PIN חדש (4-8 ספרות)</label>
-              <input type="password" inputMode="numeric" value={recoveryPinDraft} onChange={(e) => setRecoveryPinDraft(e.target.value)} style={dialogFieldStyle} />
+              <input type="password" inputMode="numeric" maxLength={8} value={recoveryPinDraft} onChange={(e) => setRecoveryPinDraft(e.target.value)} style={dialogFieldStyle} />
             </div>
             <div>
               <label className="text-[11px] font-medium block mb-1" style={{ color: LH.onSurfaceVariant }}>אימות PIN</label>
-              <input type="password" inputMode="numeric" value={recoveryPinConfirmDraft} onChange={(e) => setRecoveryPinConfirmDraft(e.target.value)} style={dialogFieldStyle} />
+              <input type="password" inputMode="numeric" maxLength={8} value={recoveryPinConfirmDraft} onChange={(e) => setRecoveryPinConfirmDraft(e.target.value)} style={dialogFieldStyle} />
             </div>
             {([0, 1, 2] as const).map((i) => (
               <div key={i} className="flex flex-col gap-1">

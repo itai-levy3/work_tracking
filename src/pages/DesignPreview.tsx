@@ -606,10 +606,10 @@ export default function DesignPreview() {
               ))}
 
               {[
-                { icon: "speed", label: "קצב השלמה", sub: "מהיעד החודשי", value: `${Math.round(percentage)}%`, grad: ["#7639FF", "#00D2FF"], glow: "rgba(118,57,255,0.55)", trackTint: "rgba(118,57,255,0.12)", percent: percentage, size: 136, lift: 0, zIndex: 40, overlap: 0, badge: 26 },
-                { icon: "hourglass_bottom", label: monthOvertime > 0 ? "בעודף החודש" : "בחוסר החודש", sub: "לעומת הקצב הצפוי", value: monthOvertime > 0 ? `+${formatHM(monthOvertime)}` : formatHM(monthRemaining), grad: ["#0F766E", "#19CEA0"], glow: "rgba(15,118,110,0.55)", trackTint: "rgba(15,118,110,0.14)", percent: monthPacePercent, size: 92, lift: 14, zIndex: 30, overlap: -22, badge: 20 },
-                { icon: "event_available", label: "ימי עבודה", sub: "השנה", value: String(yearWorkDaysCount), grad: ["#00D2FF", "#7FEFFF"], glow: "rgba(0,210,255,0.55)", trackTint: "rgba(0,210,255,0.12)", percent: yearScheduledWorkDaysSoFar > 0 ? Math.min(100, (yearWorkDaysCount / yearScheduledWorkDaysSoFar) * 100) : 0, size: 78, lift: 24, zIndex: 20, overlap: -18, badge: 18 },
-                { icon: "flag", label: "יעד חודשי", sub: `${formatHM(monthlyGoal)} שעות`, value: String(Math.round(monthlyGoal)), grad: ["#7639FF", "#B39CFF"], glow: "rgba(118,57,255,0.55)", trackTint: "rgba(118,57,255,0.12)", percent: 100, size: 68, lift: 34, zIndex: 10, overlap: -16, badge: 16 },
+                { icon: "speed", label: "קצב השלמה", sub: "מהיעד החודשי", value: `${Math.round(percentage)}%`, grad: ["#7639FF", "#00D2FF"], glow: "rgba(118,57,255,0.55)", trackTint: "rgba(118,57,255,0.12)", percent: percentage, size: 136, lift: 0, zIndex: 10, overlap: 0, badge: 26 },
+                { icon: "hourglass_bottom", label: monthOvertime > 0 ? "בעודף החודש" : "בחוסר החודש", sub: "לעומת הקצב הצפוי", value: monthOvertime > 0 ? `+${formatHM(monthOvertime)}` : formatHM(monthRemaining), grad: ["#0F766E", "#19CEA0"], glow: "rgba(15,118,110,0.55)", trackTint: "rgba(15,118,110,0.14)", percent: monthPacePercent, size: 92, lift: 14, zIndex: 20, overlap: -22, badge: 20 },
+                { icon: "event_available", label: "ימי עבודה", sub: "השנה", value: String(yearWorkDaysCount), grad: ["#00D2FF", "#7FEFFF"], glow: "rgba(0,210,255,0.55)", trackTint: "rgba(0,210,255,0.12)", percent: yearScheduledWorkDaysSoFar > 0 ? Math.min(100, (yearWorkDaysCount / yearScheduledWorkDaysSoFar) * 100) : 0, size: 78, lift: 24, zIndex: 30, overlap: -18, badge: 18 },
+                { icon: "flag", label: "יעד חודשי", sub: `${formatHM(monthlyGoal)} שעות`, value: String(Math.round(monthlyGoal)), grad: ["#7639FF", "#B39CFF"], glow: "rgba(118,57,255,0.55)", trackTint: "rgba(118,57,255,0.12)", percent: 100, size: 68, lift: 34, zIndex: 40, overlap: -16, badge: 16 },
               ].map((k, i) => {
                 const r = 43;
                 const c = 2 * Math.PI * r;
