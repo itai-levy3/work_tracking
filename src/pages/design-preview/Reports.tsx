@@ -419,11 +419,11 @@ export default function DesignPreviewReports() {
       <Dialog open={salaryForecastOpen} onOpenChange={setSalaryForecastOpen}>
         <DialogContent className="max-w-md rounded-[28px] p-6" style={{ background: LH.background }} dir="rtl">
           <DialogHeader>
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2.5 justify-end">
+              <DialogTitle style={{ color: LH.onSurface }}>משכורת צפויה בסוף החודש</DialogTitle>
               <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: `${LH.primary}0F` }}>
                 <span className="material-symbols-outlined text-[18px]" style={{ color: LH.primary }}>payments</span>
               </div>
-              <DialogTitle style={{ color: LH.onSurface }}>משכורת צפויה בסוף החודש</DialogTitle>
             </div>
           </DialogHeader>
 
