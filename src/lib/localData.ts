@@ -765,9 +765,15 @@ export interface DayPayBreakdown {
 
 export interface MonthlyPayroll {
   regularHours: number;
+  /** What actually counts toward THIS month's pay — equal to ownOvertimeHours unless
+   * overtime_payout_month is "next", in which case this is last month's overtime instead. */
   overtimeHours: number;
   regularPay: number;
   overtimePay: number;
+  /** What was actually worked as overtime THIS calendar month, regardless of which month's
+   * payslip it's paid on — always accurate for "hours accrued this month" indicators. */
+  ownOvertimeHours: number;
+  ownOvertimePay: number;
   fixedComponentsTotal: number;
   deductionsTotal: number;
   netPay: number;
@@ -929,6 +935,8 @@ export const computeMonthlyPayroll = (year: number, month: number, settings: Use
     overtimeHours,
     regularPay,
     overtimePay,
+    ownOvertimeHours: raw.overtimeHours,
+    ownOvertimePay: raw.overtimePay,
     fixedComponentsTotal,
     deductionsTotal,
     netPay,

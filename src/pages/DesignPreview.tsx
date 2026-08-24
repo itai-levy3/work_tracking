@@ -6,6 +6,7 @@ import {
   calcHoursBetween,
   computeCumulativeAccrued,
   computeCumulativeLeaveUsage,
+  computeMonthlyPayroll,
   computeVacationMinimumStatus,
   DayStatus,
   formatHM,
@@ -174,6 +175,18 @@ export default function DesignPreview() {
   const monthOvertime = monthDiff > 0 ? monthDiff : 0;
   const monthRemaining = monthDiff < 0 ? -monthDiff : 0;
   const monthPacePercent = monthTargetToDate > 0 ? Math.min(100, (totalWorked / monthTargetToDate) * 100) : totalWorked > 0 ? 100 : 0;
+
+  // Visible proof that deferred-overtime hours are actually being tracked while they accrue,
+  // for anyone with settings.overtime_payout_month === "next" — the payroll-accurate figure
+  // (per-day, tier-aware), not the simpler pace estimate above.
+  const accruedOvertimeThisMonth = useMemo(() => {
+    if (!settings || settings.overtime_payout_month !== "next") return 0;
+    return computeMonthlyPayroll(currentMonth.getFullYear(), currentMonth.getMonth(), settings, workHours).ownOvertimeHours;
+  }, [settings, currentMonth, workHours]);
+  const nextPayoutMonthLabel = useMemo(() => {
+    const d = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
+    return d.toLocaleDateString("he-IL", { month: "long" });
+  }, [currentMonth]);
 
   const todayTarget = settings ? getEffectiveDailyTarget(todayStr, todayEntry, settings) : 0;
   // On a day that isn't a scheduled work day, todayTarget is 0 (so every hour worked is overtime —
@@ -702,6 +715,16 @@ export default function DesignPreview() {
                 );
               })}
             </div>
+            {accruedOvertimeThisMonth > 0 && (
+              <div className="flex justify-center -mt-2 mb-1">
+                <div className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full" style={{ background: "rgba(0,168,204,0.1)" }}>
+                  <span className="material-symbols-outlined text-[14px]" style={{ color: "#00A8CC" }}>sync_alt</span>
+                  <span className="text-[11px] font-bold" style={{ color: "#00A8CC" }}>
+                    {formatHM(accruedOvertimeThisMonth)} שעות נוספות נשמרות לתלוש {nextPayoutMonthLabel}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Monthly work hours hero */}

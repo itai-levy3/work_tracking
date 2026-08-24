@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import {
   computeEffectiveHourlyRateForMonth,
@@ -23,6 +24,7 @@ export default function DesignPreviewReports() {
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [currentMonth, setCurrentMonth] = useState(() => new Date());
+  const [salaryForecastOpen, setSalaryForecastOpen] = useState(false);
 
   useEffect(() => {
     if (!isLocalAuthenticated()) {
@@ -189,6 +191,26 @@ export default function DesignPreviewReports() {
                 <span className="text-[12px] font-bold tracking-[0.08em] block mb-1" style={{ color: "rgba(255,255,255,0.7)" }}>שעות נוספות</span>
                 <span className="text-[20px] leading-[28px] font-bold tracking-tight tabular-nums">{formatHM(payroll.overtimeHours)}</span>
                 <div className="text-[13px] font-bold mt-1 tabular-nums">{money(payroll.overtimePay)}</div>
+                {settings.overtime_payout_month === "next" && (payroll.overtimeHours > 0 || payroll.ownOvertimeHours > 0) && (
+                  <div className="mt-2.5 pt-2.5 flex flex-col gap-1" style={{ borderTop: "1px solid rgba(255,255,255,0.18)" }}>
+                    {payroll.overtimeHours > 0 && (
+                      <div className="flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[12px]" style={{ color: "rgba(255,255,255,0.75)" }}>history</span>
+                        <span className="text-[9.5px] font-semibold leading-tight" style={{ color: "rgba(255,255,255,0.75)" }}>
+                          מתלוש {MONTH_HE[(currentMonth.getMonth() + 11) % 12]}
+                        </span>
+                      </div>
+                    )}
+                    {payroll.ownOvertimeHours > 0 && (
+                      <div className="flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[12px]" style={{ color: "#7FEFFF" }}>sync_alt</span>
+                        <span className="text-[9.5px] font-semibold leading-tight" style={{ color: "#7FEFFF" }}>
+                          {formatHM(payroll.ownOvertimeHours)} נצברו החודש · יופיעו בתלוש {MONTH_HE[(currentMonth.getMonth() + 1) % 12]}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Money flow — a visual journey from gross to net, not a receipt list */}
@@ -369,68 +391,108 @@ export default function DesignPreviewReports() {
                 </div>
               )}
 
-              {/* Month-end salary forecast — the headline number the whole page builds toward */}
-              <div
-                className="rounded-[32px] p-7 col-span-2 relative overflow-hidden"
-                style={{ background: "linear-gradient(155deg, #0B0F2E 0%, #1B1440 45%, #4C3AA8 100%)", boxShadow: "0 30px 70px -18px rgba(76,58,168,0.55)" }}
+              {/* Month-end salary forecast — a button, not an always-open card; the full
+                  gross/net breakdown lives in the dialog it opens. */}
+              <button
+                onClick={() => setSalaryForecastOpen(true)}
+                className="col-span-2 rounded-[28px] p-5 relative overflow-hidden text-right transition-transform active:scale-[0.98]"
+                style={{ background: "linear-gradient(155deg, #0B0F2E 0%, #1B1440 45%, #4C3AA8 100%)", boxShadow: "0 20px 50px -16px rgba(76,58,168,0.5)" }}
               >
-                <div className="absolute -top-20 -right-16 w-64 h-64 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(118,57,255,0.4), transparent 70%)", filter: "blur(24px)" }} />
-                <div className="absolute -bottom-24 -left-16 w-64 h-64 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(0,210,255,0.28), transparent 70%)", filter: "blur(24px)" }} />
+                <div className="absolute -top-14 -right-10 w-40 h-40 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(118,57,255,0.4), transparent 70%)", filter: "blur(18px)" }} />
                 <div className="absolute top-0 inset-x-0 h-1" style={{ background: "linear-gradient(90deg,#7639FF,#00D2FF,#19CEA0)" }} />
-
-                <div className="relative z-10 flex items-center gap-2 mb-6">
-                  <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.12)" }}>
-                    <span className="material-symbols-outlined text-[16px]" style={{ color: "#B39CFF" }}>payments</span>
+                <div className="relative z-10 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.12)" }}>
+                      <span className="material-symbols-outlined text-[22px]" style={{ color: "#B39CFF" }}>payments</span>
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-[14px] font-bold block truncate" style={{ color: "#fff" }}>משכורת צפויה בסוף החודש</span>
+                      <span className="text-[11px] font-medium" style={{ color: "rgba(255,255,255,0.55)" }}>ברוטו ונטו · לחיצה לפרטים</span>
+                    </div>
                   </div>
-                  <span className="text-[11.5px] font-extrabold tracking-[0.16em] uppercase" style={{ color: "rgba(255,255,255,0.75)" }}>משכורת צפויה בסוף החודש</span>
+                  <span className="material-symbols-outlined text-[22px] shrink-0" style={{ color: "rgba(255,255,255,0.5)" }}>chevron_left</span>
                 </div>
-
-                <div className="relative z-10 grid grid-cols-2 gap-5">
-                  <div>
-                    <span className="text-[10.5px] font-bold tracking-[0.12em] uppercase block mb-2" style={{ color: "rgba(255,255,255,0.5)" }}>ברוטו</span>
-                    <span
-                      className="block tabular-nums leading-none"
-                      dir="ltr"
-                      style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 30, fontWeight: 800, letterSpacing: "-0.02em", color: "#fff" }}
-                    >
-                      {money(forecastGrossTotal)}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-[10.5px] font-bold tracking-[0.12em] uppercase block mb-2" style={{ color: "rgba(255,255,255,0.5)" }}>נטו</span>
-                    <span
-                      className="block tabular-nums leading-none"
-                      dir="ltr"
-                      style={{
-                        fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif",
-                        fontSize: 30,
-                        fontWeight: 800,
-                        letterSpacing: "-0.02em",
-                        backgroundImage: "linear-gradient(120deg,#7FEFFF,#00D2FF)",
-                        WebkitBackgroundClip: "text",
-                        backgroundClip: "text",
-                        color: "transparent",
-                      }}
-                    >
-                      {money(projectedPayroll.netPay)}
-                    </span>
-                  </div>
-                </div>
-
-                {isCurrentMonth && (
-                  <div className="relative z-10 mt-6 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "#19CEA0" }} />
-                    <span className="text-[10.5px] font-semibold" style={{ color: "rgba(255,255,255,0.55)" }}>
-                      תחזית מלאה — כולל ימים שטרם הגיעו, לפי לוח העבודה שלך
-                    </span>
-                  </div>
-                )}
-              </div>
+              </button>
             </div>
           </div>
         </div>
       </main>
       <LHBottomNav active="reports" foodEnabled={!!settings.food_card_enabled} />
+
+      {/* Salary forecast — opened from the button above, not shown inline */}
+      <Dialog open={salaryForecastOpen} onOpenChange={setSalaryForecastOpen}>
+        <DialogContent
+          className="max-w-md rounded-[28px] p-0 border-0 overflow-hidden [&>button]:text-white [&>button]:bg-white/10 hover:[&>button]:bg-white/20"
+          dir="rtl"
+        >
+          <div className="relative p-7" style={{ background: "linear-gradient(155deg, #0B0F2E 0%, #1B1440 45%, #4C3AA8 100%)" }}>
+            <div className="absolute -top-20 -right-16 w-64 h-64 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(118,57,255,0.4), transparent 70%)", filter: "blur(24px)" }} />
+            <div className="absolute -bottom-24 -left-16 w-64 h-64 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(0,210,255,0.28), transparent 70%)", filter: "blur(24px)" }} />
+            <div className="absolute top-0 inset-x-0 h-1" style={{ background: "linear-gradient(90deg,#7639FF,#00D2FF,#19CEA0)" }} />
+
+            <DialogHeader className="relative z-10 mb-6 text-right">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.12)" }}>
+                  <span className="material-symbols-outlined text-[16px]" style={{ color: "#B39CFF" }}>payments</span>
+                </div>
+                <DialogTitle className="text-[13px] font-extrabold tracking-[0.1em] uppercase" style={{ color: "rgba(255,255,255,0.85)" }}>
+                  משכורת צפויה בסוף החודש
+                </DialogTitle>
+              </div>
+            </DialogHeader>
+
+            <div className="relative z-10 grid grid-cols-2 gap-5">
+              <div>
+                <span className="text-[10.5px] font-bold tracking-[0.12em] uppercase block mb-2" style={{ color: "rgba(255,255,255,0.5)" }}>ברוטו</span>
+                <span
+                  className="block tabular-nums leading-none"
+                  dir="ltr"
+                  style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 32, fontWeight: 800, letterSpacing: "-0.02em", color: "#fff" }}
+                >
+                  {money(forecastGrossTotal)}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10.5px] font-bold tracking-[0.12em] uppercase block mb-2" style={{ color: "rgba(255,255,255,0.5)" }}>נטו</span>
+                <span
+                  className="block tabular-nums leading-none"
+                  dir="ltr"
+                  style={{
+                    fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif",
+                    fontSize: 32,
+                    fontWeight: 800,
+                    letterSpacing: "-0.02em",
+                    backgroundImage: "linear-gradient(120deg,#7FEFFF,#00D2FF)",
+                    WebkitBackgroundClip: "text",
+                    backgroundClip: "text",
+                    color: "transparent",
+                  }}
+                >
+                  {money(projectedPayroll.netPay)}
+                </span>
+              </div>
+            </div>
+
+            {settings.overtime_payout_month === "next" && payroll.ownOvertimeHours > 0 && (
+              <div className="relative z-10 mt-5 flex items-center gap-1.5 rounded-2xl px-3 py-2" style={{ background: "rgba(0,210,255,0.1)" }}>
+                <span className="material-symbols-outlined text-[14px] shrink-0" style={{ color: "#7FEFFF" }}>sync_alt</span>
+                <span className="text-[10.5px] font-semibold" style={{ color: "#7FEFFF" }}>
+                  {formatHM(payroll.ownOvertimeHours)} שעות נוספות שנצברו החודש לא כלולות כאן — יופיעו בתלוש {MONTH_HE[(currentMonth.getMonth() + 1) % 12]}
+                </span>
+              </div>
+            )}
+
+            {isCurrentMonth && (
+              <div className="relative z-10 mt-5 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "#19CEA0" }} />
+                <span className="text-[10.5px] font-semibold" style={{ color: "rgba(255,255,255,0.55)" }}>
+                  תחזית מלאה — כולל ימים שטרם הגיעו, לפי לוח העבודה שלך
+                </span>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
