@@ -124,6 +124,13 @@ export interface UserSettings {
    * proportionally from the first minute past the target.
    */
   overtime_round_hours?: boolean;
+  /**
+   * "current" (default) = overtime pay counts in the payslip for the month it was actually
+   * worked. "next" = some workplaces settle overtime a month behind — hours worked in August
+   * appear on September's payslip — so that month's payroll excludes its own overtime and
+   * includes the PREVIOUS month's instead.
+   */
+  overtime_payout_month?: "current" | "next";
   /** Fixed monthly additions (e.g. travel allowance) added to every month's payroll report. */
   fixed_components?: PayLineItem[];
   /** Fixed monthly deductions (e.g. pension) subtracted from every month's payroll report. */
@@ -243,6 +250,7 @@ const defaultSettings: UserSettings = {
     { rateType: "percent", rateValue: 150 },
   ],
   overtime_round_hours: false,
+  overtime_payout_month: "current",
   fixed_components: [],
   deductions: [],
   annual_vacation_days: 12,
@@ -305,6 +313,7 @@ const safeParseUserData = (raw: string | null): LocalDataShape => {
         overtime_calc_enabled: parsed.settings?.overtime_calc_enabled ?? defaultSettings.overtime_calc_enabled,
         overtime_tiers: Array.isArray(parsed.settings?.overtime_tiers) ? parsed.settings.overtime_tiers : defaultSettings.overtime_tiers,
         overtime_round_hours: parsed.settings?.overtime_round_hours ?? defaultSettings.overtime_round_hours,
+        overtime_payout_month: parsed.settings?.overtime_payout_month ?? defaultSettings.overtime_payout_month,
         fixed_components: Array.isArray(parsed.settings?.fixed_components) ? parsed.settings.fixed_components : defaultSettings.fixed_components,
         deductions: Array.isArray(parsed.settings?.deductions) ? parsed.settings.deductions : defaultSettings.deductions,
         annual_vacation_days:
@@ -788,7 +797,22 @@ export interface MonthlyPayroll {
  * hours — which is itself the "cut" a hourly-rate employee would see. Holidays are always paid
  * in full and never touch the vacation/sick balances.
  */
-export const computeMonthlyPayroll = (year: number, month: number, settings: UserSettings, entriesOverride?: WorkHour[]): MonthlyPayroll => {
+interface RawMonthPay {
+  regularHours: number;
+  overtimeHours: number;
+  regularPay: number;
+  overtimePay: number;
+  daysWorked: number;
+  unpaidLeaveDays: number;
+  unpaidOffDays: number;
+  holidayDays: number;
+  perDay: DayPayBreakdown[];
+}
+
+/** The actual per-day work/leave accounting for one month, with no knowledge of the
+ * overtime-payout-month setting — computeMonthlyPayroll below decides which month's overtime
+ * pay actually counts. */
+const computeRawMonthPay = (year: number, month: number, settings: UserSettings, entriesOverride?: WorkHour[]): RawMonthPay => {
   const entries = entriesOverride ?? getWorkHoursForMonth(year, month);
   const baseRate = computeEffectiveHourlyRateForMonth(year, month, settings);
   const useOvertime = settings.overtime_calc_enabled !== false;
@@ -839,6 +863,24 @@ export const computeMonthlyPayroll = (year: number, month: number, settings: Use
     overtimePay += dayOvertimePay;
     daysWorked += 1;
     perDay.push({ date: w.date, regularHours: dayRegular, overtimeHours: dayOvertime, regularPay: dayRegularPay, overtimePay: dayOvertimePay });
+  }
+
+  return { regularHours, overtimeHours, regularPay, overtimePay, daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay };
+};
+
+export const computeMonthlyPayroll = (year: number, month: number, settings: UserSettings, entriesOverride?: WorkHour[]): MonthlyPayroll => {
+  const raw = computeRawMonthPay(year, month, settings, entriesOverride);
+  const { daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay, regularHours, regularPay } = raw;
+  let { overtimeHours, overtimePay } = raw;
+
+  // Some workplaces pay overtime worked in month N on the payslip for month N+1 instead of N's
+  // own payslip — this month's own overtime moves out (it'll count next month instead), and last
+  // month's overtime moves in. Regular hours/pay and the attendance figures above are unaffected.
+  if (settings.overtime_payout_month === "next") {
+    const prevMonthDate = new Date(year, month - 1, 1);
+    const prevRaw = computeRawMonthPay(prevMonthDate.getFullYear(), prevMonthDate.getMonth(), settings);
+    overtimeHours = prevRaw.overtimeHours;
+    overtimePay = prevRaw.overtimePay;
   }
 
   const fixedComponentsTotal = (settings.fixed_components || []).reduce((s, c) => s + (c.amount || 0), 0);

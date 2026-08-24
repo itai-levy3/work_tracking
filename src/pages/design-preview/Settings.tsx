@@ -490,6 +490,10 @@ export default function DesignPreviewSettings() {
     if (!settings) return;
     persist({ ...settings, overtime_calc_enabled: v });
   };
+  const setOvertimePayoutMonth = (v: "current" | "next") => {
+    if (!settings) return;
+    persist({ ...settings, overtime_payout_month: v });
+  };
 
   const openLeaveDialog = () => {
     if (!settings) return;
@@ -808,6 +812,18 @@ export default function DesignPreviewSettings() {
               on={!!settings.overtime_calc_enabled}
               onChange={toggleOvertime}
             />
+            {settings.overtime_calc_enabled && (
+              <ToggleRow
+                title="תשלום שעות נוספות בתלוש הבא"
+                value={
+                  settings.overtime_payout_month === "next"
+                    ? "פעיל: שעות נוספות מהחודש הזה משולמות בתלוש של החודש הבא"
+                    : "כבוי: שעות נוספות משולמות באותו חודש שבו עבדת"
+                }
+                on={settings.overtime_payout_month === "next"}
+                onChange={(v) => setOvertimePayoutMonth(v ? "next" : "current")}
+              />
+            )}
           </Section>
 
           <Section icon="beach_access" title="חופש ומחלה">

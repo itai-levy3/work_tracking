@@ -368,6 +368,64 @@ export default function DesignPreviewReports() {
                   </span>
                 </div>
               )}
+
+              {/* Month-end salary forecast — the headline number the whole page builds toward */}
+              <div
+                className="rounded-[32px] p-7 col-span-2 relative overflow-hidden"
+                style={{ background: "linear-gradient(155deg, #0B0F2E 0%, #1B1440 45%, #4C3AA8 100%)", boxShadow: "0 30px 70px -18px rgba(76,58,168,0.55)" }}
+              >
+                <div className="absolute -top-20 -right-16 w-64 h-64 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(118,57,255,0.4), transparent 70%)", filter: "blur(24px)" }} />
+                <div className="absolute -bottom-24 -left-16 w-64 h-64 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(0,210,255,0.28), transparent 70%)", filter: "blur(24px)" }} />
+                <div className="absolute top-0 inset-x-0 h-1" style={{ background: "linear-gradient(90deg,#7639FF,#00D2FF,#19CEA0)" }} />
+
+                <div className="relative z-10 flex items-center gap-2 mb-6">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.12)" }}>
+                    <span className="material-symbols-outlined text-[16px]" style={{ color: "#B39CFF" }}>payments</span>
+                  </div>
+                  <span className="text-[11.5px] font-extrabold tracking-[0.16em] uppercase" style={{ color: "rgba(255,255,255,0.75)" }}>משכורת צפויה בסוף החודש</span>
+                </div>
+
+                <div className="relative z-10 grid grid-cols-2 gap-5">
+                  <div>
+                    <span className="text-[10.5px] font-bold tracking-[0.12em] uppercase block mb-2" style={{ color: "rgba(255,255,255,0.5)" }}>ברוטו</span>
+                    <span
+                      className="block tabular-nums leading-none"
+                      dir="ltr"
+                      style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 30, fontWeight: 800, letterSpacing: "-0.02em", color: "#fff" }}
+                    >
+                      {money(forecastGrossTotal)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10.5px] font-bold tracking-[0.12em] uppercase block mb-2" style={{ color: "rgba(255,255,255,0.5)" }}>נטו</span>
+                    <span
+                      className="block tabular-nums leading-none"
+                      dir="ltr"
+                      style={{
+                        fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif",
+                        fontSize: 30,
+                        fontWeight: 800,
+                        letterSpacing: "-0.02em",
+                        backgroundImage: "linear-gradient(120deg,#7FEFFF,#00D2FF)",
+                        WebkitBackgroundClip: "text",
+                        backgroundClip: "text",
+                        color: "transparent",
+                      }}
+                    >
+                      {money(projectedPayroll.netPay)}
+                    </span>
+                  </div>
+                </div>
+
+                {isCurrentMonth && (
+                  <div className="relative z-10 mt-6 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "#19CEA0" }} />
+                    <span className="text-[10.5px] font-semibold" style={{ color: "rgba(255,255,255,0.55)" }}>
+                      תחזית מלאה — כולל ימים שטרם הגיעו, לפי לוח העבודה שלך
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
