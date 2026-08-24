@@ -391,27 +391,23 @@ export default function DesignPreviewReports() {
                 </div>
               )}
 
-              {/* Month-end salary forecast — a button, not an always-open card; the full
+              {/* Month-end salary forecast — a plain button, not an always-open card; the full
                   gross/net breakdown lives in the dialog it opens. */}
               <button
                 onClick={() => setSalaryForecastOpen(true)}
-                className="col-span-2 rounded-[28px] p-5 relative overflow-hidden text-right transition-transform active:scale-[0.98]"
-                style={{ background: "linear-gradient(155deg, #0B0F2E 0%, #1B1440 45%, #4C3AA8 100%)", boxShadow: "0 20px 50px -16px rgba(76,58,168,0.5)" }}
+                className="col-span-2 rounded-[24px] p-5 flex items-center justify-between gap-3 text-right transition-transform active:scale-[0.98]"
+                style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}
               >
-                <div className="absolute -top-14 -right-10 w-40 h-40 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(118,57,255,0.4), transparent 70%)", filter: "blur(18px)" }} />
-                <div className="absolute top-0 inset-x-0 h-1" style={{ background: "linear-gradient(90deg,#7639FF,#00D2FF,#19CEA0)" }} />
-                <div className="relative z-10 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.12)" }}>
-                      <span className="material-symbols-outlined text-[22px]" style={{ color: "#B39CFF" }}>payments</span>
-                    </div>
-                    <div className="min-w-0">
-                      <span className="text-[14px] font-bold block truncate" style={{ color: "#fff" }}>משכורת צפויה בסוף החודש</span>
-                      <span className="text-[11px] font-medium" style={{ color: "rgba(255,255,255,0.55)" }}>ברוטו ונטו · לחיצה לפרטים</span>
-                    </div>
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: `${LH.primary}0F` }}>
+                    <span className="material-symbols-outlined text-[22px]" style={{ color: LH.primary }}>payments</span>
                   </div>
-                  <span className="material-symbols-outlined text-[22px] shrink-0" style={{ color: "rgba(255,255,255,0.5)" }}>chevron_left</span>
+                  <div className="min-w-0">
+                    <span className="text-[14px] font-bold block truncate" style={{ color: LH.onSurface }}>משכורת צפויה בסוף החודש</span>
+                    <span className="text-[11px] font-medium" style={{ color: LH.onSurfaceVariant }}>ברוטו ונטו · לחיצה לפרטים</span>
+                  </div>
                 </div>
+                <span className="material-symbols-outlined text-[22px] shrink-0" style={{ color: LH.onSurfaceVariant }}>chevron_left</span>
               </button>
             </div>
           </div>
