@@ -191,27 +191,41 @@ export default function DesignPreviewReports() {
                 <span className="text-[12px] font-bold tracking-[0.08em] block mb-1" style={{ color: "rgba(255,255,255,0.7)" }}>שעות נוספות</span>
                 <span className="text-[20px] leading-[28px] font-bold tracking-tight tabular-nums">{formatHM(payroll.overtimeHours)}</span>
                 <div className="text-[13px] font-bold mt-1 tabular-nums">{money(payroll.overtimePay)}</div>
-                {settings.overtime_payout_month === "next" && (payroll.overtimeHours > 0 || payroll.ownOvertimeHours > 0) && (
-                  <div className="mt-2.5 pt-2.5 flex flex-col gap-1" style={{ borderTop: "1px solid rgba(255,255,255,0.18)" }}>
-                    {payroll.overtimeHours > 0 && (
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[12px]" style={{ color: "rgba(255,255,255,0.75)" }}>history</span>
-                        <span className="text-[9.5px] font-semibold leading-tight" style={{ color: "rgba(255,255,255,0.75)" }}>
-                          מתלוש {MONTH_HE[(currentMonth.getMonth() + 11) % 12]}
-                        </span>
-                      </div>
-                    )}
-                    {payroll.ownOvertimeHours > 0 && (
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[12px]" style={{ color: "#7FEFFF" }}>sync_alt</span>
-                        <span className="text-[9.5px] font-semibold leading-tight" style={{ color: "#7FEFFF" }}>
-                          {formatHM(payroll.ownOvertimeHours)} נצברו החודש · יופיעו בתלוש {MONTH_HE[(currentMonth.getMonth() + 1) % 12]}
-                        </span>
-                      </div>
-                    )}
+                {settings.overtime_payout_month === "next" && payroll.overtimeHours > 0 && (
+                  <div className="mt-2.5 pt-2.5 flex items-center gap-1" style={{ borderTop: "1px solid rgba(255,255,255,0.18)" }}>
+                    <span className="material-symbols-outlined text-[12px]" style={{ color: "rgba(255,255,255,0.75)" }}>history</span>
+                    <span className="text-[9.5px] font-semibold leading-tight" style={{ color: "rgba(255,255,255,0.75)" }}>
+                      מתלוש {MONTH_HE[(currentMonth.getMonth() + 11) % 12]}
+                    </span>
                   </div>
                 )}
               </div>
+
+              {/* Deferred-overtime tracker — this month's own accrual, which will carry into the
+                  black tile above once next month's payslip is viewed; kept as its own card so
+                  it reads clearly rather than as a cramped note. */}
+              {settings.overtime_payout_month === "next" && (
+                <div
+                  className="rounded-[24px] p-5 col-span-2 relative overflow-hidden flex items-center gap-4"
+                  style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}
+                >
+                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "linear-gradient(155deg,#00A8CC,#00D2FF)", boxShadow: "0 12px 26px -8px rgba(0,168,204,0.5)" }}>
+                    <span className="material-symbols-outlined text-white text-[24px]">sync_alt</span>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-[12px] font-bold tracking-[0.05em] block mb-0.5" style={{ color: LH.onSurfaceVariant }}>
+                      שעות נוספות שנצברו החודש · יופיעו בתלוש {MONTH_HE[(currentMonth.getMonth() + 1) % 12]}
+                    </span>
+                    <span
+                      dir="ltr"
+                      className="tabular-nums leading-none block"
+                      style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: "#00A8CC" }}
+                    >
+                      {formatHM(payroll.ownOvertimeHours)}
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* Money flow — a visual journey from gross to net, not a receipt list */}
               <div
