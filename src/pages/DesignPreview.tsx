@@ -715,17 +715,41 @@ export default function DesignPreview() {
                 );
               })}
             </div>
-            {accruedOvertimeThisMonth > 0 && (
-              <div className="flex justify-center -mt-2 mb-1">
-                <div className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full" style={{ background: "rgba(0,168,204,0.1)" }}>
-                  <span className="material-symbols-outlined text-[14px]" style={{ color: "#00A8CC" }}>sync_alt</span>
-                  <span className="text-[11px] font-bold" style={{ color: "#00A8CC" }}>
-                    {formatHM(accruedOvertimeThisMonth)} שעות נוספות נשמרות לתלוש {nextPayoutMonthLabel}
-                  </span>
+          </div>
+
+          {/* Deferred-overtime tracker — only relevant when overtime settles on next month's
+              payslip; kept as its own prominent card rather than a small chip so it's easy to
+              find and read while hours are still accruing. */}
+          {settings.overtime_payout_month === "next" && (
+            <div
+              className="lh-rise rounded-[32px] p-6 flex flex-col gap-4 relative overflow-hidden"
+              style={{ animationDelay: "230ms", background: "rgba(255,255,255,0.7)", backdropFilter: "blur(24px)", border: "1px solid rgba(255,255,255,0.8)", boxShadow: "0 24px 48px rgba(35,50,100,0.05)" }}
+            >
+              <div className="absolute -left-16 -bottom-16 w-56 h-56 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(0,168,204,0.1), transparent 70%)", filter: "blur(30px)" }} />
+              <div className="flex items-center gap-3 relative z-10">
+                <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "linear-gradient(155deg,#00A8CC,#00D2FF)", boxShadow: "0 12px 26px -8px rgba(0,168,204,0.5)" }}>
+                  <span className="material-symbols-outlined text-white text-[24px]">sync_alt</span>
+                </div>
+                <div>
+                  <span className="text-[15px] font-bold block" style={{ color: "#101A46" }}>שעות נוספות שנצברו החודש</span>
+                  <span className="text-[11.5px] font-medium" style={{ color: "#8892b0" }}>יופיעו בתלוש {nextPayoutMonthLabel}</span>
                 </div>
               </div>
-            )}
-          </div>
+              <div className="flex items-baseline gap-2 relative z-10">
+                <span
+                  className="tabular-nums leading-none"
+                  dir="ltr"
+                  style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 44, fontWeight: 800, letterSpacing: "-0.02em", color: "#00A8CC" }}
+                >
+                  {formatHM(accruedOvertimeThisMonth)}
+                </span>
+                <span className="text-[13px] font-bold" style={{ color: "#8892b0" }}>שעות</span>
+              </div>
+              <p className="text-[11.5px] leading-relaxed relative z-10" style={{ color: "#8892b0" }}>
+                המקום איפה שעובדים אצלך משלמים שעות נוספות בתלוש של החודש שאחרי — השעות האלה לא נכללות בתחזית של החודש הנוכחי, ויופיעו ישירות תחת "שעות נוספות" ויתווספו למשכורת בתלוש {nextPayoutMonthLabel}.
+              </p>
+            </div>
+          )}
 
           {/* Monthly work hours hero */}
           <div className="lh-rise bg-white/70 backdrop-blur-2xl rounded-[32px] p-6 flex flex-col gap-6 border border-white/80 relative overflow-hidden" style={{ animationDelay: "260ms", boxShadow: "0 24px 48px rgba(35,50,100,0.05)" }}>
