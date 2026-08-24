@@ -209,20 +209,19 @@ export default function DesignPreviewReports() {
                   className="rounded-[24px] p-5 col-span-2 relative overflow-hidden flex items-center gap-4"
                   style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}
                 >
-                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "linear-gradient(155deg,#00A8CC,#00D2FF)", boxShadow: "0 12px 26px -8px rgba(0,168,204,0.5)" }}>
-                    <span className="material-symbols-outlined text-white text-[24px]">sync_alt</span>
-                  </div>
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 text-right">
                     <span className="text-[12px] font-bold tracking-[0.05em] block mb-0.5" style={{ color: LH.onSurfaceVariant }}>
                       שעות נוספות שנצברו החודש · יופיעו בתלוש {MONTH_HE[(currentMonth.getMonth() + 1) % 12]}
                     </span>
                     <span
-                      dir="ltr"
                       className="tabular-nums leading-none block"
                       style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: "#00A8CC" }}
                     >
                       {formatHM(payroll.ownOvertimeHours)}
                     </span>
+                  </div>
+                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "linear-gradient(155deg,#00A8CC,#00D2FF)", boxShadow: "0 12px 26px -8px rgba(0,168,204,0.5)" }}>
+                    <span className="material-symbols-outlined text-white text-[24px]">sync_alt</span>
                   </div>
                 </div>
               )}
