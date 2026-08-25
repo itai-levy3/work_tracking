@@ -183,6 +183,9 @@ export default function DesignPreviewFood() {
     const updated: FoodEntry = {
       ...detailEntry,
       date: editDate,
+      // Only today's entries ever show a time — carrying over an old time after moving an entry
+      // to a different day (or setting one for a day that never had one) would be misleading.
+      time: editDate === todayKey ? detailEntry.time : undefined,
       cardAmount: amount,
       personalTopUp: undefined,
       note: editNote.trim() || undefined,
@@ -405,7 +408,7 @@ export default function DesignPreviewFood() {
                           <span className="material-symbols-outlined text-[18px]" style={{ color: grad[0] }}>restaurant</span>
                         </div>
                         <div>
-                          <div className="text-[13px] font-bold" style={{ color: "#101A46" }}>{isToday ? "היום" : `${date.getDate()} ב${MONTH_HE[date.getMonth()]}`} {e.time ? `· ${e.time}` : ""}</div>
+                          <div className="text-[13px] font-bold" style={{ color: "#101A46" }}>{isToday ? "היום" : `${date.getDate()} ב${MONTH_HE[date.getMonth()]}`} {isToday && e.time ? `· ${e.time}` : ""}</div>
                           {e.note && <div className="text-[11.5px]" style={{ color: LH.onSurfaceVariant }}>{e.note}</div>}
                           {!!e.personalTopUp && (
                             <div className="text-[10.5px] font-bold" style={{ color: "#DC2626" }}><span dir="ltr">+{money(e.personalTopUp)}</span> מהאשראי האישי</div>
@@ -526,7 +529,7 @@ export default function DesignPreviewFood() {
                     <span style={{ color: LH.onSurfaceVariant }}>תאריך</span>
                     <span className="font-bold" style={{ color: "#101A46" }}>{new Date(`${detailEntry.date}T00:00:00`).toLocaleDateString("he-IL")}</span>
                   </div>
-                  {detailEntry.time && (
+                  {detailEntry.date === todayKey && detailEntry.time && (
                     <div className="flex justify-between text-[13px]">
                       <span style={{ color: LH.onSurfaceVariant }}>שעה</span>
                       <span className="font-bold" style={{ color: "#101A46" }}>{detailEntry.time}</span>

@@ -194,7 +194,9 @@ const toDbFoodEntry = (e: FoodEntry, userId: string) => ({
 const fromDbFoodEntry = (row: any): FoodEntry => ({
   id: row.id,
   date: row.date,
-  time: row.time ?? undefined,
+  // Postgres' time column round-trips as "HH:MM:SS" — trim to "HH:MM" to match what the app
+  // itself ever writes.
+  time: row.time ? String(row.time).slice(0, 5) : undefined,
   cardAmount: Number(row.card_amount) || 0,
   personalTopUp: row.personal_top_up != null ? Number(row.personal_top_up) : undefined,
   note: row.note ?? undefined,
