@@ -503,10 +503,18 @@ export default function DesignPreview() {
             </div>
 
             <div className="flex justify-between w-full px-2 z-10 gap-4">
-              <div className="flex-1 flex flex-col items-center bg-white/50 backdrop-blur-md rounded-2xl px-4 py-3 border border-white shadow-sm">
-                <span className="text-[12px] font-bold tracking-[0.08em] text-[#46464f] mb-1">כניסה</span>
+              <button
+                type="button"
+                onClick={() => isClockedIn && openDayModal(new Date(), todayEntry)}
+                disabled={!isClockedIn}
+                className="flex-1 flex flex-col items-center bg-white/50 backdrop-blur-md rounded-2xl px-4 py-3 border border-white shadow-sm relative"
+              >
+                <span className="text-[12px] font-bold tracking-[0.08em] text-[#46464f] mb-1 flex items-center gap-1">
+                  כניסה
+                  {isClockedIn && <span className="material-symbols-outlined" style={{ fontSize: 13, color: "#7639FF" }}>edit</span>}
+                </span>
                 <span className="text-[24px] font-bold tabular-nums leading-none" style={{ color: "#101A46" }}>{todayEntry?.start_time || "--:--"}</span>
-              </div>
+              </button>
               <div className="flex-1 flex flex-col items-center bg-white/50 backdrop-blur-md rounded-2xl px-4 py-3 border border-white shadow-sm">
                 <span className="text-[12px] font-bold tracking-[0.08em] text-[#46464f] mb-1">{todayEntry?.end_time ? "יציאה" : "יציאה משוערת"}</span>
                 <span className="text-[24px] font-bold tabular-nums leading-none" style={{ color: "#101A46" }}>{todayEntry?.end_time || estimatedExit || "--:--"}</span>

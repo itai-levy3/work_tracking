@@ -208,13 +208,13 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
       merged.segments = undefined;
       merged.deficitCoveredBy = undefined;
     } else if (merged.segments && merged.segments.length > 1) {
-      // A day with more than one shift: the visible start/end fields edit only the LAST segment —
-      // earlier segments (and their hours) are preserved untouched.
-      const updatedSegments = merged.segments.map((seg, i, arr) =>
-        i === arr.length - 1 ? { ...seg, start: merged.start_time ?? seg.start, end: merged.end_time, evening: merged.evening } : seg,
-      );
-      merged.segments = updatedSegments;
-      merged.hours_worked = updatedSegments.reduce((s, seg) => s + calcHoursBetween(seg.start, seg.end), 0);
+      // A day with more than one shift: each segment is now edited (and deletable) independently
+      // in the form below, so `merged.segments` already reflects the real, current per-shift
+      // times — just total them up and mirror the last one into start_time/end_time.
+      merged.hours_worked = merged.segments.reduce((s, seg) => s + calcHoursBetween(seg.start, seg.end), 0);
+      const last = merged.segments[merged.segments.length - 1];
+      merged.start_time = last.start;
+      merged.end_time = last.end;
     } else {
       // Always recomputed fresh from the times — never falls back to the old stored value, so
       // clearing either time (e.g. "still working, no exit yet") correctly zeroes this out instead
@@ -226,6 +226,28 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
     onSaved();
     onClose();
     toast.success("היום עודכן");
+  };
+
+  // Each shift on a multi-segment day is edited independently — never derived from a single
+  // shared start/end pair, so editing (or deleting) one never touches the others.
+  const updateSegment = (index: number, field: "start" | "end", value: string) => {
+    setDraft((d) => {
+      const segs = [...(d.segments || [])];
+      segs[index] = { ...segs[index], [field]: field === "end" ? value || null : value };
+      return { ...d, segments: segs };
+    });
+  };
+
+  const deleteSegment = (index: number) => {
+    setDraft((d) => {
+      const segs = [...(d.segments || [])];
+      segs.splice(index, 1);
+      if (segs.length > 1) return { ...d, segments: segs };
+      // Down to one (or zero) shifts — collapse back to the plain start/end fields instead of a
+      // segments array of length 1, matching how a single-shift day is normally represented.
+      const only = segs[0];
+      return { ...d, segments: undefined, start_time: only?.start ?? null, end_time: only?.end ?? null };
+    });
   };
 
   const handleDeleteDay = () => {
@@ -534,54 +556,94 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
 
               {status === "worked" ? (
                 <div className="relative z-10 flex flex-col gap-4">
-                  <div className="flex items-center gap-2">
-                    <div className="ddm-field flex-1 rounded-2xl px-3 py-2" style={{ background: "#fff", border: "1px solid #e4e1e6", boxShadow: "0 2px 8px rgba(35,50,100,0.03)" }}>
-                      <div className="flex items-center justify-between mb-0.5">
-                        <label className="text-[10px] font-bold flex items-center gap-1" style={{ color: "#8892b0" }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 13 }}>login</span>
-                          כניסה
-                        </label>
-                        {draft.start_time && (
-                          <button
-                            type="button"
-                            onClick={() => save({ start_time: null })}
-                            className="ddm-clear-link text-[9px] font-bold flex items-center gap-0.5"
-                            style={{ color: "#B0B7C9" }}
-                            title="נקה שעת כניסה"
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>backspace</span>
-                            נקה
-                          </button>
-                        )}
-                      </div>
-                      <input type="time" value={draft.start_time || ""} onChange={(e) => setDraft((d) => ({ ...d, start_time: e.target.value }))} className="w-full text-[15px] font-bold bg-transparent outline-none" style={{ color: "#101A46" }} />
+                  {draft.segments && draft.segments.length > 1 ? (
+                    <div className="flex flex-col gap-3">
+                      {draft.segments.map((seg, i) => (
+                        <div key={i} className="rounded-2xl p-3 flex flex-col gap-2" style={{ background: "#fff", border: "1px solid #e4e1e6", boxShadow: "0 2px 8px rgba(35,50,100,0.03)" }}>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold uppercase tracking-[0.08em]" style={{ color: "#8892b0" }}>{`משמרת ${i + 1}`}</span>
+                            <button
+                              type="button"
+                              onClick={() => deleteSegment(i)}
+                              className="ddm-clear-link text-[9px] font-bold flex items-center gap-0.5"
+                              style={{ color: "#B0B7C9" }}
+                              title="מחיקת המשמרת הזו"
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 13 }}>delete</span>
+                              מחיקה
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 flex flex-col gap-0.5">
+                              <label className="text-[9px] font-bold" style={{ color: "#8892b0" }}>כניסה</label>
+                              <input
+                                type="time"
+                                value={seg.start}
+                                onChange={(e) => updateSegment(i, "start", e.target.value)}
+                                className="w-full text-[14px] font-bold bg-transparent outline-none"
+                                style={{ color: "#101A46" }}
+                              />
+                            </div>
+                            <span className="material-symbols-outlined text-[15px]" style={{ color: "#8892b0" }}>arrow_forward</span>
+                            <div className="flex-1 flex flex-col gap-0.5">
+                              <label className="text-[9px] font-bold" style={{ color: "#8892b0" }}>יציאה</label>
+                              <input
+                                type="time"
+                                value={seg.end || ""}
+                                onChange={(e) => updateSegment(i, "end", e.target.value)}
+                                className="w-full text-[14px] font-bold bg-transparent outline-none"
+                                style={{ color: "#101A46" }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    <div className="ddm-field flex-1 rounded-2xl px-3 py-2" style={{ background: "#fff", border: "1px solid #e4e1e6", boxShadow: "0 2px 8px rgba(35,50,100,0.03)" }}>
-                      <div className="flex items-center justify-between mb-0.5">
-                        <label className="text-[10px] font-bold flex items-center gap-1" style={{ color: "#8892b0" }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 13 }}>logout</span>
-                          יציאה
-                        </label>
-                        {draft.end_time && (
-                          <button
-                            type="button"
-                            onClick={() => save({ end_time: null })}
-                            className="ddm-clear-link text-[9px] font-bold flex items-center gap-0.5"
-                            style={{ color: "#B0B7C9" }}
-                            title="נקה שעת יציאה — עדיין עובד"
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>backspace</span>
-                            נקה
-                          </button>
-                        )}
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <div className="ddm-field flex-1 rounded-2xl px-3 py-2" style={{ background: "#fff", border: "1px solid #e4e1e6", boxShadow: "0 2px 8px rgba(35,50,100,0.03)" }}>
+                        <div className="flex items-center justify-between mb-0.5">
+                          <label className="text-[10px] font-bold flex items-center gap-1" style={{ color: "#8892b0" }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>login</span>
+                            כניסה
+                          </label>
+                          {draft.start_time && (
+                            <button
+                              type="button"
+                              onClick={() => save({ start_time: null })}
+                              className="ddm-clear-link text-[9px] font-bold flex items-center gap-0.5"
+                              style={{ color: "#B0B7C9" }}
+                              title="נקה שעת כניסה"
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 12 }}>backspace</span>
+                              נקה
+                            </button>
+                          )}
+                        </div>
+                        <input type="time" value={draft.start_time || ""} onChange={(e) => setDraft((d) => ({ ...d, start_time: e.target.value }))} className="w-full text-[15px] font-bold bg-transparent outline-none" style={{ color: "#101A46" }} />
                       </div>
-                      <input type="time" value={draft.end_time || ""} onChange={(e) => setDraft((d) => ({ ...d, end_time: e.target.value }))} className="w-full text-[15px] font-bold bg-transparent outline-none" style={{ color: "#101A46" }} />
+                      <div className="ddm-field flex-1 rounded-2xl px-3 py-2" style={{ background: "#fff", border: "1px solid #e4e1e6", boxShadow: "0 2px 8px rgba(35,50,100,0.03)" }}>
+                        <div className="flex items-center justify-between mb-0.5">
+                          <label className="text-[10px] font-bold flex items-center gap-1" style={{ color: "#8892b0" }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>logout</span>
+                            יציאה
+                          </label>
+                          {draft.end_time && (
+                            <button
+                              type="button"
+                              onClick={() => save({ end_time: null })}
+                              className="ddm-clear-link text-[9px] font-bold flex items-center gap-0.5"
+                              style={{ color: "#B0B7C9" }}
+                              title="נקה שעת יציאה — עדיין עובד"
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 12 }}>backspace</span>
+                              נקה
+                            </button>
+                          )}
+                        </div>
+                        <input type="time" value={draft.end_time || ""} onChange={(e) => setDraft((d) => ({ ...d, end_time: e.target.value }))} className="w-full text-[15px] font-bold bg-transparent outline-none" style={{ color: "#101A46" }} />
+                      </div>
                     </div>
-                  </div>
-                  {draft.segments && draft.segments.length > 1 && (
-                    <p className="text-[11px]" style={{ color: "#8892b0" }}>
-                      ליום הזה יש {draft.segments.length} משמרות. השדות כאן עורכים רק את המשמרת האחרונה — הקודמות נשארות כמו שהיו.
-                    </p>
                   )}
                   {!hasTimes && !draft.start_time && (
                     <p className="text-[11px]" style={{ color: "#8892b0" }}>אפשר לתכנן יום עתידי מראש בלי לרשום שעות — רק לסמן משמרת ערב, חופש/מחלה, או להשאיר הערה.</p>
@@ -592,13 +654,15 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                       אין שעת יציאה — היום מסומן כעדיין פעיל.
                     </p>
                   )}
-                  <label className="flex items-center justify-between gap-2 p-3 rounded-xl" style={{ background: "rgba(118,57,255,0.05)" }}>
-                    <span className="text-[13px] font-medium flex items-center gap-1.5" style={{ color: "#101A46" }}>
-                      <span className="material-symbols-outlined text-[16px]" style={{ color: "#7639FF" }}>dark_mode</span>
-                      משמרת ערב
-                    </span>
-                    <input type="checkbox" checked={!!draft.evening} onChange={(e) => setDraft((d) => ({ ...d, evening: e.target.checked }))} className="w-5 h-5 accent-[#7639FF]" />
-                  </label>
+                  {(!draft.segments || draft.segments.length <= 1) && (
+                    <label className="flex items-center justify-between gap-2 p-3 rounded-xl" style={{ background: "rgba(118,57,255,0.05)" }}>
+                      <span className="text-[13px] font-medium flex items-center gap-1.5" style={{ color: "#101A46" }}>
+                        <span className="material-symbols-outlined text-[16px]" style={{ color: "#7639FF" }}>dark_mode</span>
+                        משמרת ערב
+                      </span>
+                      <input type="checkbox" checked={!!draft.evening} onChange={(e) => setDraft((d) => ({ ...d, evening: e.target.checked }))} className="w-5 h-5 accent-[#7639FF]" />
+                    </label>
+                  )}
 
                   {hasTimes && deficit > 0.01 && (
                     <div className="rounded-xl p-3 flex flex-col gap-2" style={{ background: "rgba(220,38,38,0.05)", border: "1px solid rgba(220,38,38,0.15)" }}>
