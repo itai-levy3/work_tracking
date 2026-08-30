@@ -51,6 +51,7 @@ export default function DesignPreview() {
 
   const [dayModalDate, setDayModalDate] = useState<Date | null>(null);
   const [dayModalEntry, setDayModalEntry] = useState<WorkHour | undefined>(undefined);
+  const [dayModalForceEdit, setDayModalForceEdit] = useState(false);
 
   const loadMonth = (month: Date, s?: UserSettings) => {
     const hrs = getWorkHoursForMonth(month.getFullYear(), month.getMonth());
@@ -341,9 +342,10 @@ export default function DesignPreview() {
     setTimeout(() => setActionPopup(null), 2200);
   };
 
-  const openDayModal = (date: Date, entry: WorkHour | undefined) => {
+  const openDayModal = (date: Date, entry: WorkHour | undefined, forceEdit = false) => {
     setDayModalDate(date);
     setDayModalEntry(entry);
+    setDayModalForceEdit(forceEdit);
   };
 
   if (loading || !settings) {
@@ -505,7 +507,7 @@ export default function DesignPreview() {
             <div className="flex justify-between w-full px-2 z-10 gap-4">
               <button
                 type="button"
-                onClick={() => isClockedIn && openDayModal(new Date(), todayEntry)}
+                onClick={() => isClockedIn && openDayModal(new Date(), todayEntry, true)}
                 disabled={!isClockedIn}
                 className="flex-1 flex flex-col items-center bg-white/50 backdrop-blur-md rounded-2xl px-4 py-3 border border-white shadow-sm relative"
               >
@@ -1058,6 +1060,7 @@ export default function DesignPreview() {
         settings={settings}
         onClose={() => setDayModalDate(null)}
         onSaved={refresh}
+        initialEditing={dayModalForceEdit}
       />
 
       {offDayPrompt && (

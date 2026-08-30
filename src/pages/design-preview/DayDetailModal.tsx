@@ -44,6 +44,9 @@ interface DayDetailModalProps {
   settings: UserSettings;
   onClose: () => void;
   onSaved: () => void;
+  /** Opens straight into the edit card (e.g. "fix my clock-in time") instead of the circular
+   * summary — a genuinely different screen, not a variant of the big orb view. */
+  initialEditing?: boolean;
 }
 
 const modalStyle = `
@@ -125,10 +128,11 @@ const modalStyle = `
  * (or a blank day) opens a compact rounded card, both centered on screen — never a corner-boxed
  * dialog or a bottom sheet.
  */
-export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayDetailModalProps) {
+export function DayDetailModal({ date, entry, settings, onClose, onSaved, initialEditing }: DayDetailModalProps) {
   const [draft, setDraft] = useState<Partial<WorkHour>>({});
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmDeleteSegment, setConfirmDeleteSegment] = useState<number | null>(null);
   const [displayedHours, setDisplayedHours] = useState(0);
 
   useEffect(() => {
@@ -139,11 +143,13 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
         : { date: dateKey(date), hours_worked: 0, start_time: null, end_time: null, status: "worked" },
     );
     // A day that already has recorded data (worked hours, a non-worked status, or a note) opens
-    // in the circular summary view; a blank day goes straight into editing.
+    // in the circular summary view; a blank day goes straight into editing. initialEditing skips
+    // the summary entirely regardless (used by the "fix my clock-in time" shortcut on Home).
     const hasData = !!entry && (getCountedHours(entry) > 0 || !!entry.start_time || (entry.status && entry.status !== "worked") || !!entry.note);
-    setEditing(!hasData);
+    setEditing(initialEditing || !hasData);
     setConfirmDelete(false);
-  }, [date, entry]);
+    setConfirmDeleteSegment(null);
+  }, [date, entry, initialEditing]);
 
   // Counts the orb's hero number up from 0 to its real value on open, for a livelier reveal.
   useEffect(() => {
@@ -259,6 +265,30 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
     onSaved();
     onClose();
     toast.success("היום אופס");
+  };
+
+  // Deletes one shift straight from the summary view — no need to open the edit card first —
+  // for a day that has more than one. Same tap-then-confirm pattern as deleting the whole day.
+  const handleDeleteSegmentFromSummary = (index: number) => {
+    if (!entry || !entry.segments) return;
+    if (confirmDeleteSegment !== index) {
+      setConfirmDeleteSegment(index);
+      return;
+    }
+    const segs = [...entry.segments];
+    segs.splice(index, 1);
+    const last = segs[segs.length - 1];
+    const updated: WorkHour = {
+      ...entry,
+      segments: segs.length > 1 ? segs : undefined,
+      start_time: last ? last.start : null,
+      end_time: last ? last.end : null,
+      hours_worked: segs.reduce((s, seg) => s + calcHoursBetween(seg.start, seg.end), 0),
+    };
+    upsertWorkHour(updated);
+    onSaved();
+    onClose();
+    toast.success("המשמרת נמחקה");
   };
 
   return (
@@ -436,6 +466,17 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                               {seg.end || "פעיל"}
                             </span>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSegmentFromSummary(i)}
+                            className="flex items-center justify-center px-2.5"
+                            style={{ background: confirmDeleteSegment === i ? "#DC2626" : "rgba(220,38,38,0.08)" }}
+                            title="מחיקת המשמרת הזו"
+                          >
+                            <span className="material-symbols-outlined text-[15px]" style={{ color: confirmDeleteSegment === i ? "#fff" : "#DC2626" }}>
+                              {confirmDeleteSegment === i ? "check" : "delete"}
+                            </span>
+                          </button>
                         </div>
                       ))
                     : (
