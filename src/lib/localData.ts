@@ -6,6 +6,7 @@ import {
   pushDeleteWorkHour,
   pushDeleteWorkHoursRange,
   pushFoodEntry,
+  pushPayrollActual,
   pushPdfArchiveEntry,
   pushSettings,
   pushWorkHour,
@@ -236,6 +237,18 @@ export const PAYROLL_DEVIATION_REASONS: PayrollDeviationReason[] = [
  * received — logged locally only (not synced to Supabase yet) so future months can eventually
  * learn from the pattern. `aiAnalysis` holds the AI assistant's free-text read on `note`.
  */
+/** Settings fields the AI deviation analysis is allowed to point at and propose a corrected
+ * value for — deliberately narrow (only numeric statutory-deduction inputs) so a misread of the
+ * user's free text can never silently touch anything else. */
+export const CORRECTABLE_PAYROLL_FIELDS: { id: keyof UserSettings; label: string; kind: "amount" | "rate" | "points" }[] = [
+  { id: "manual_income_tax", label: "מס הכנסה", kind: "amount" },
+  { id: "manual_national_insurance", label: "ביטוח לאומי", kind: "amount" },
+  { id: "manual_health_insurance", label: "ביטוח בריאות", kind: "amount" },
+  { id: "pension_employee_rate", label: "אחוז פנסיה", kind: "rate" },
+  { id: "training_fund_employee_rate", label: "אחוז קרן השתלמות", kind: "rate" },
+  { id: "tax_credit_points", label: "נקודות זיכוי", kind: "points" },
+];
+
 export interface PayrollActual {
   year: number;
   month: number; // 0-indexed
@@ -244,6 +257,12 @@ export interface PayrollActual {
   reasonId?: string;
   note?: string;
   aiAnalysis?: string;
+  /** A field from CORRECTABLE_PAYROLL_FIELDS the AI (or the user directly) pinned the deviation
+   * to, with the value that would have made this month's estimate match what was actually
+   * received — applied either to just this month (via computeMonthlyPayrollWithOverride) or to
+   * settings permanently, per the user's choice. */
+  overrideField?: string;
+  overrideValue?: number;
   updatedAt: string; // ISO timestamp
 }
 
@@ -1004,6 +1023,31 @@ export const computeMonthlyPayroll = (year: number, month: number, settings: Use
 };
 
 /**
+ * computeMonthlyPayroll, but patched with a single CORRECTABLE_PAYROLL_FIELDS override for this
+ * one month only — used to preview and apply a "fix just this month" choice from the payroll
+ * reconciliation card without touching the user's real settings at all. `overrideField` outside
+ * the allow-list is ignored (falls back to plain computeMonthlyPayroll) since it's never expected
+ * to hold anything else, but a stray/legacy value must never silently patch an arbitrary field.
+ */
+export const computeMonthlyPayrollWithOverride = (
+  year: number,
+  month: number,
+  settings: UserSettings,
+  overrideField: string | undefined,
+  overrideValue: number | undefined,
+): MonthlyPayroll => {
+  const isAllowed = overrideField && CORRECTABLE_PAYROLL_FIELDS.some((f) => f.id === overrideField);
+  if (!isAllowed || overrideValue === undefined) return computeMonthlyPayroll(year, month, settings);
+  const patched: UserSettings = { ...settings, [overrideField]: overrideValue };
+  // The manual_* deduction fields only ever feed the calculation in "manual" mode — patch that
+  // too for this one-month preview, otherwise the override would silently have no effect.
+  if (overrideField.startsWith("manual_") && patched.statutory_deduction_mode !== "manual") {
+    patched.statutory_deduction_mode = "manual";
+  }
+  return computeMonthlyPayroll(year, month, patched);
+};
+
+/**
  * Like computeMonthlyPayroll, but for the CURRENT month projects every remaining day that has no
  * entry yet: a scheduled work day contributes its target hours at the regular rate (no overtime —
  * that's never predictable in advance), while an already-planned future entry (leave marked ahead
@@ -1123,8 +1167,10 @@ export const getPayrollActual = (year: number, month: number): PayrollActual | u
 export const savePayrollActual = (entry: Omit<PayrollActual, "updatedAt">) => {
   const data = readData();
   const rest = (data.payrollActuals || []).filter((e) => !(e.year === entry.year && e.month === entry.month));
-  data.payrollActuals = [...rest, { ...entry, updatedAt: new Date().toISOString() }];
+  const full: PayrollActual = { ...entry, updatedAt: new Date().toISOString() };
+  data.payrollActuals = [...rest, full];
   writeData(data);
+  void pushPayrollActual(full);
 };
 
 export const exportLocalBackup = (): LocalBackupFile => {
@@ -1180,8 +1226,7 @@ export const syncAfterLogin = async (pulled: PulledData): Promise<void> => {
       workHours: pulled.workHours,
       foodEntries: pulled.foodEntries,
       pdfArchive: pulled.pdfArchive,
-      // Not synced to Supabase yet — always keep whatever's already on this device.
-      payrollActuals: data.payrollActuals,
+      payrollActuals: pulled.payrollActuals,
       profile: { firstName: pulled.firstName || data.profile.firstName || "WorkTrack" },
     });
     return;
@@ -1190,4 +1235,5 @@ export const syncAfterLogin = async (pulled: PulledData): Promise<void> => {
   await Promise.all(data.workHours.map((w) => pushWorkHour(w)));
   await Promise.all(data.foodEntries.map((e) => pushFoodEntry(e)));
   await Promise.all(data.pdfArchive.map((e) => pushPdfArchiveEntry(e)));
+  await Promise.all((data.payrollActuals || []).map((e) => pushPayrollActual(e)));
 };

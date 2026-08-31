@@ -6,14 +6,16 @@ import { analyzePayrollDeviation } from "@/lib/aiAssistant";
 import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import {
   computeEffectiveHourlyRateForMonth,
-  computeMonthlyPayroll,
+  computeMonthlyPayrollWithOverride,
   computeProjectedMonthlyPayroll,
+  CORRECTABLE_PAYROLL_FIELDS,
   formatHM,
   getPayrollActual,
   getProfileFirstName,
   getSettings,
   PAYROLL_DEVIATION_REASONS,
   savePayrollActual,
+  saveSettings,
   UserSettings,
 } from "@/lib/localData";
 import { exportMonthlyPayslipPdf } from "@/lib/pdfExport";
@@ -37,6 +39,10 @@ export default function DesignPreviewReports() {
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [aiAnalysisLoading, setAiAnalysisLoading] = useState(false);
   const [actualSaved, setActualSaved] = useState(false);
+  const [detectedField, setDetectedField] = useState<string | null>(null);
+  // Bumped after every save so the payroll useMemo below (and this load effect) re-read the
+  // just-written record — getPayrollActual itself isn't reactive state React can track.
+  const [actualsVersion, setActualsVersion] = useState(0);
 
   useEffect(() => {
     const existing = getPayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
@@ -44,8 +50,9 @@ export default function DesignPreviewReports() {
     setDeviationReasonId(existing?.reasonId);
     setDeviationNote(existing?.note || "");
     setAiAnalysis(existing?.aiAnalysis || null);
+    setDetectedField(existing?.overrideField || null);
     setActualSaved(!!existing);
-  }, [currentMonth]);
+  }, [currentMonth, actualsVersion]);
 
   useEffect(() => {
     if (!isLocalAuthenticated()) {
@@ -64,8 +71,10 @@ export default function DesignPreviewReports() {
 
   const payroll = useMemo(() => {
     if (!settings) return null;
-    return computeMonthlyPayroll(currentMonth.getFullYear(), currentMonth.getMonth(), settings);
-  }, [settings, currentMonth]);
+    const savedActual = getPayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
+    return computeMonthlyPayrollWithOverride(currentMonth.getFullYear(), currentMonth.getMonth(), settings, savedActual?.overrideField, savedActual?.overrideValue);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings, currentMonth, actualsVersion]);
 
   // Full end-of-month forecast: same as `payroll` for already-earned figures, but the deduction
   // categories (and net) reflect the FULL month's expected gross — days that haven't happened yet
@@ -117,7 +126,14 @@ export default function DesignPreviewReports() {
   const deviationDirection: "less" | "more" | null = hasActualNet && Math.abs(deviation) > 1 ? (deviation < 0 ? "less" : "more") : null;
   const deviationReasonOptions = deviationDirection ? PAYROLL_DEVIATION_REASONS.filter((r) => r.direction === deviationDirection) : [];
 
-  const saveActualNet = () => {
+  const detectedFieldMeta = detectedField ? CORRECTABLE_PAYROLL_FIELDS.find((f) => f.id === detectedField) : null;
+  // Only "amount" fields (raw ₪ deductions) get a deterministically-computed suggested value —
+  // rate/points fields need a % or point-value change that isn't a straight ₪-for-₪ swap, so
+  // those are surfaced as an identified cause without an auto-applied number.
+  const currentFieldValue = detectedFieldMeta ? Number((settings as unknown as Record<string, number>)[detectedFieldMeta.id]) || 0 : 0;
+  const suggestedFieldValue = detectedFieldMeta?.kind === "amount" && hasActualNet ? Math.max(0, currentFieldValue - deviation) : undefined;
+
+  const saveActualNet = (overrides: { overrideField?: string | null; overrideValue?: number } = {}) => {
     if (!hasActualNet) return;
     savePayrollActual({
       year: currentMonth.getFullYear(),
@@ -127,9 +143,11 @@ export default function DesignPreviewReports() {
       reasonId: deviationReasonId,
       note: deviationNote.trim() || undefined,
       aiAnalysis: aiAnalysis || undefined,
+      overrideField: overrides.overrideField === null ? undefined : overrides.overrideField ?? detectedField ?? undefined,
+      overrideValue: overrides.overrideValue,
     });
+    setActualsVersion((v) => v + 1);
     setActualSaved(true);
-    toast.success("נשמר");
   };
 
   const runAiAnalysis = async () => {
@@ -145,12 +163,34 @@ export default function DesignPreviewReports() {
         reasonLabel,
         note: deviationNote,
       });
-      setAiAnalysis(result);
+      setAiAnalysis(result.explanation);
+      setDetectedField(result.field);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "שגיאה בניתוח");
     } finally {
       setAiAnalysisLoading(false);
     }
+  };
+
+  const applyFixThisMonthOnly = () => {
+    if (!detectedFieldMeta || suggestedFieldValue === undefined) return;
+    saveActualNet({ overrideField: detectedFieldMeta.id, overrideValue: suggestedFieldValue });
+    toast.success(`${detectedFieldMeta.label} תוקן רק לחודש ${MONTH_HE[currentMonth.getMonth()]}`);
+  };
+
+  const applyFixAllFutureMonths = () => {
+    if (!detectedFieldMeta || suggestedFieldValue === undefined || !settings) return;
+    const patch: Partial<UserSettings> = { [detectedFieldMeta.id]: suggestedFieldValue };
+    if (detectedFieldMeta.id.startsWith("manual_") && settings.statutory_deduction_mode !== "manual") {
+      patch.statutory_deduction_mode = "manual";
+    }
+    const nextSettings = { ...settings, ...patch };
+    saveSettings(nextSettings);
+    setSettings(nextSettings);
+    // This month's own record no longer needs a one-off override — the permanent settings change
+    // already covers it (and every future month) going forward.
+    saveActualNet({ overrideField: null });
+    toast.success(`${detectedFieldMeta.label} עודכן לכל המשכורות מכאן ואילך`);
   };
 
   return (
@@ -329,11 +369,41 @@ export default function DesignPreviewReports() {
                       <p className="text-[12.5px] leading-relaxed" style={{ color: LH.onSurface }}>{aiAnalysis}</p>
                     </div>
                   )}
+
+                  {detectedFieldMeta && (
+                    <div className="rounded-2xl p-4" style={{ background: "rgba(15,118,110,0.06)", border: "1px solid rgba(15,118,110,0.2)" }}>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <span className="material-symbols-outlined text-[16px]" style={{ color: "#0F766E" }}>target</span>
+                        <span className="text-[12px] font-bold" style={{ color: "#0F766E" }}>זוהה שדה ספציפי: {detectedFieldMeta.label}</span>
+                      </div>
+                      {suggestedFieldValue !== undefined ? (
+                        <>
+                          <div className="flex items-center gap-2 mb-3 text-[12.5px]" style={{ color: LH.onSurface }}>
+                            <span>ערך נוכחי: <b>{money(currentFieldValue)}</b></span>
+                            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                            <span>מוצע: <b>{money(suggestedFieldValue)}</b></span>
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={applyFixThisMonthOnly} className="flex-1 h-10 rounded-xl text-[12px] font-bold" style={{ background: "rgba(35,50,100,0.06)", color: LH.onSurface }}>
+                              עדכון רק לחודש הזה
+                            </button>
+                            <button onClick={applyFixAllFutureMonths} className="flex-1 h-10 rounded-xl text-[12px] font-bold text-white" style={{ background: "#0F766E" }}>
+                              עדכון מכאן ואילך
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-[12px]" style={{ color: LH.onSurfaceVariant }}>
+                          זה שדה שמוגדר כאחוז, ולא ניתן להציע ערך מדויק אוטומטית — כדאי לעדכן אותו ידנית בהגדרות → ניכויי חובה ופנסיה.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
               <button
-                onClick={saveActualNet}
+                onClick={() => { saveActualNet(); toast.success("נשמר"); }}
                 disabled={!hasActualNet}
                 className="w-full h-11 rounded-2xl font-bold mt-4 disabled:opacity-50"
                 style={{ background: actualSaved ? "rgba(15,118,110,0.1)" : `${LH.primary}0F`, color: actualSaved ? "#0F766E" : LH.primary }}

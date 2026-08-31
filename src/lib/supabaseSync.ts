@@ -1,5 +1,5 @@
 import { isSupabaseConfigured, supabase } from "@/lib/supabaseClient";
-import type { FoodEntry, PdfArchiveEntry, UserSettings, WorkHour } from "@/lib/localData";
+import type { FoodEntry, PayrollActual, PdfArchiveEntry, UserSettings, WorkHour } from "@/lib/localData";
 
 /**
  * Background sync to Supabase — the app's UI stays fully synchronous against localStorage (see
@@ -232,6 +232,44 @@ export const pushPdfArchiveEntry = async (entry: PdfArchiveEntry): Promise<void>
   if (error) logSyncError("pushPdfArchiveEntry", error);
 };
 
+// ---- payroll actuals (estimated-vs-actual net pay reconciliation) ----
+
+export const pushPayrollActual = async (entry: PayrollActual): Promise<void> => {
+  const userId = await getUserId();
+  if (!userId) return;
+  const { error } = await supabase.from("payroll_actuals").upsert(
+    {
+      user_id: userId,
+      year: entry.year,
+      month: entry.month,
+      actual_net: entry.actualNet,
+      estimated_net: entry.estimatedNet,
+      reason_id: entry.reasonId ?? null,
+      note: entry.note ?? null,
+      ai_analysis: entry.aiAnalysis ?? null,
+      override_field: entry.overrideField ?? null,
+      override_value: entry.overrideValue ?? null,
+      updated_at: entry.updatedAt,
+    },
+    { onConflict: "user_id,year,month" },
+  );
+  if (error) logSyncError("pushPayrollActual", error);
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const fromDbPayrollActual = (row: any): PayrollActual => ({
+  year: row.year,
+  month: row.month,
+  actualNet: Number(row.actual_net) || 0,
+  estimatedNet: Number(row.estimated_net) || 0,
+  reasonId: row.reason_id ?? undefined,
+  note: row.note ?? undefined,
+  aiAnalysis: row.ai_analysis ?? undefined,
+  overrideField: row.override_field ?? undefined,
+  overrideValue: row.override_value != null ? Number(row.override_value) : undefined,
+  updatedAt: row.updated_at,
+});
+
 // ---- pull-everything-on-login ----
 
 export interface PulledData {
@@ -240,6 +278,7 @@ export interface PulledData {
   workHours: WorkHour[];
   foodEntries: FoodEntry[];
   pdfArchive: PdfArchiveEntry[];
+  payrollActuals: PayrollActual[];
 }
 
 /** Called once right after a real Supabase session is confirmed — fetches this user's full state
@@ -249,17 +288,19 @@ export const pullAllFromSupabase = async (): Promise<PulledData | null> => {
   const userId = await getUserId();
   if (!userId) return null;
 
-  const [settingsRes, workHoursRes, foodRes, pdfRes] = await Promise.all([
+  const [settingsRes, workHoursRes, foodRes, pdfRes, payrollActualsRes] = await Promise.all([
     supabase.from("settings").select("*").eq("user_id", userId).maybeSingle(),
     supabase.from("work_hours").select("*").eq("user_id", userId),
     supabase.from("food_entries").select("*").eq("user_id", userId),
     supabase.from("pdf_archive").select("*").eq("user_id", userId),
+    supabase.from("payroll_actuals").select("*").eq("user_id", userId),
   ]);
 
   if (settingsRes.error) logSyncError("pull settings", settingsRes.error);
   if (workHoursRes.error) logSyncError("pull work_hours", workHoursRes.error);
   if (foodRes.error) logSyncError("pull food_entries", foodRes.error);
   if (pdfRes.error) logSyncError("pull pdf_archive", pdfRes.error);
+  if (payrollActualsRes.error) logSyncError("pull payroll_actuals", payrollActualsRes.error);
 
   const parsedSettings = settingsRes.data ? fromDbSettings(settingsRes.data) : null;
 
@@ -268,6 +309,7 @@ export const pullAllFromSupabase = async (): Promise<PulledData | null> => {
     firstName: parsedSettings?.firstName ?? null,
     workHours: (workHoursRes.data ?? []).map(fromDbWorkHour),
     foodEntries: (foodRes.data ?? []).map(fromDbFoodEntry),
+    payrollActuals: (payrollActualsRes.data ?? []).map(fromDbPayrollActual),
     pdfArchive: (pdfRes.data ?? []).map(
       (row): PdfArchiveEntry => ({
         year: row.year,

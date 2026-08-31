@@ -2,6 +2,7 @@ import {
   computeLeaveUsage,
   computeMonthlyPayroll,
   computeVacationMinimumStatus,
+  CORRECTABLE_PAYROLL_FIELDS,
   getProfileFirstName,
   getSettings,
   getWorkHoursForYear,
@@ -85,9 +86,17 @@ export const askAiAssistant = async (question: string): Promise<string> => {
   return String(data.answer || "");
 };
 
+export interface PayrollDeviationAnalysis {
+  /** One id from CORRECTABLE_PAYROLL_FIELDS, or null if nothing in the allow-list matched. */
+  field: string | null;
+  explanation: string;
+}
+
 /** Sends one month's estimated-vs-actual net pay gap (plus whatever the user typed about it) to
- * the same AI assistant, asking for a likely explanation and a concrete settings fix so future
- * months land closer to what's actually received. */
+ * the same AI assistant, asking it to pin the deviation to one specific, known-safe settings
+ * field when the description clearly points to one (e.g. "מס הכנסה לא היה נכון" → income tax) —
+ * the exact corrected number is computed deterministically from the deviation, never guessed by
+ * the model, so this only ever needs to identify WHICH field, not what value. */
 export const analyzePayrollDeviation = async (params: {
   year: number;
   month: number;
@@ -95,15 +104,25 @@ export const analyzePayrollDeviation = async (params: {
   actualNet: number;
   reasonLabel?: string;
   note: string;
-}): Promise<string> => {
+}): Promise<PayrollDeviationAnalysis> => {
   const { year, month, estimatedNet, actualNet, reasonLabel, note } = params;
   const diff = actualNet - estimatedNet;
-  const question = `נתח פער בין המשכורת שהאפליקציה חישבה למשכורת שהתקבלה בפועל, והצע הסבר קצר וממוקד בעברית, ואם יש הגדרה קונקרטית באפליקציה (ניכוי ידני, אחוז מס, פנסיה, תוספת קבועה וכו') שכדאי לעדכן כדי שהחישוב יהיה מדויק יותר בחודשים הבאים — הצע אותה בפירוש.
+  const fieldList = CORRECTABLE_PAYROLL_FIELDS.map((f) => `${f.id} (${f.label})`).join(", ");
+  const question = `נתח פער בין המשכורת שהאפליקציה חישבה למשכורת שהתקבלה בפועל.
+השורה הראשונה בתשובה שלך חייבת להיות בדיוק בפורמט: שדה: <מזהה השדה מהרשימה, או none אם אין התאמה ברורה וחד-משמעית>
+לאחר מכן, משורה שנייה, הסבר קצר וממוקד בעברית (2-3 משפטים) למה כנראה נוצר הפער.
+בחר שדה רק אם התיאור של המשתמש מצביע עליו במפורש וללא ספק — אחרת יש להשיב none. רשימת השדות המותרים בלבד: ${fieldList}.
 חודש: ${month + 1}/${year}
 נטו משוער במערכת: ₪${Math.round(estimatedNet)}
 נטו בפועל שהתקבל: ₪${Math.round(actualNet)}
 הפרש: ${diff >= 0 ? "+" : ""}₪${Math.round(diff)}
 סיבה שהמשתמש בחר: ${reasonLabel || "לא נבחרה סיבה ספציפית"}
 תיאור חופשי מהמשתמש: ${note || "(לא הוזן)"}`;
-  return askAiAssistant(question);
+  const answer = await askAiAssistant(question);
+  const lines = answer.split("\n");
+  const firstLineMatch = lines[0]?.match(/שדה:\s*(\S+)/);
+  const candidate = firstLineMatch?.[1]?.replace(/[.,:]$/, "");
+  const field = candidate && candidate !== "none" && CORRECTABLE_PAYROLL_FIELDS.some((f) => f.id === candidate) ? candidate : null;
+  const explanation = field || firstLineMatch ? lines.slice(1).join("\n").trim() || answer : answer;
+  return { field, explanation };
 };
