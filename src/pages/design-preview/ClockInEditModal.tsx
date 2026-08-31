@@ -94,22 +94,30 @@ export function ClockInEditModal({ open, date, entry, onClose, onSaved }: ClockI
             </p>
 
             <div className="cie-time-tap relative z-10 mt-6 mb-2 w-full flex justify-center">
-              <span
-                dir="ltr"
-                className="tabular-nums leading-none"
-                style={{
-                  fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif",
-                  fontSize: 72,
-                  fontWeight: 800,
-                  letterSpacing: "-0.03em",
-                  backgroundImage: "linear-gradient(160deg, #7639FF, #00D2FF)",
-                  WebkitBackgroundClip: "text",
-                  backgroundClip: "text",
-                  color: "transparent",
-                }}
-              >
-                {draftTime || "--:--"}
-              </span>
+              <div className="relative inline-flex">
+                <span
+                  dir="ltr"
+                  className="tabular-nums leading-none"
+                  style={{
+                    fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif",
+                    fontSize: 72,
+                    fontWeight: 800,
+                    letterSpacing: "-0.03em",
+                    backgroundImage: "linear-gradient(160deg, #7639FF, #00D2FF)",
+                    WebkitBackgroundClip: "text",
+                    backgroundClip: "text",
+                    color: "transparent",
+                  }}
+                >
+                  {draftTime || "--:--"}
+                </span>
+                <div
+                  className="absolute -top-1 -right-4 w-8 h-8 rounded-full flex items-center justify-center pointer-events-none"
+                  style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 6px 14px -4px rgba(118,57,255,0.55), 0 0 0 3px #fff" }}
+                >
+                  <span className="material-symbols-outlined text-white" style={{ fontSize: 15 }}>edit</span>
+                </div>
+              </div>
               <input
                 type="time"
                 value={draftTime}
