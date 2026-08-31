@@ -44,9 +44,6 @@ interface DayDetailModalProps {
   settings: UserSettings;
   onClose: () => void;
   onSaved: () => void;
-  /** Opens straight into the edit card (e.g. "fix my clock-in time") instead of the circular
-   * summary — a genuinely different screen, not a variant of the big orb view. */
-  initialEditing?: boolean;
 }
 
 const modalStyle = `
@@ -128,7 +125,7 @@ const modalStyle = `
  * (or a blank day) opens a compact rounded card, both centered on screen — never a corner-boxed
  * dialog or a bottom sheet.
  */
-export function DayDetailModal({ date, entry, settings, onClose, onSaved, initialEditing }: DayDetailModalProps) {
+export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayDetailModalProps) {
   const [draft, setDraft] = useState<Partial<WorkHour>>({});
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -143,13 +140,12 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved, initia
         : { date: dateKey(date), hours_worked: 0, start_time: null, end_time: null, status: "worked" },
     );
     // A day that already has recorded data (worked hours, a non-worked status, or a note) opens
-    // in the circular summary view; a blank day goes straight into editing. initialEditing skips
-    // the summary entirely regardless (used by the "fix my clock-in time" shortcut on Home).
+    // in the circular summary view; a blank day goes straight into editing.
     const hasData = !!entry && (getCountedHours(entry) > 0 || !!entry.start_time || (entry.status && entry.status !== "worked") || !!entry.note);
-    setEditing(initialEditing || !hasData);
+    setEditing(!hasData);
     setConfirmDelete(false);
     setConfirmDeleteSegment(null);
-  }, [date, entry, initialEditing]);
+  }, [date, entry]);
 
   // Counts the orb's hero number up from 0 to its real value on open, for a livelier reveal.
   useEffect(() => {
