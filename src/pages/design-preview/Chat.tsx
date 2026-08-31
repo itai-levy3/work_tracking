@@ -87,7 +87,9 @@ function answerQueryLocal(query: string, settings: UserSettings): string | null 
       return isWorked || isPaidOff ? s + getCountedHours(w) : s;
     }, 0);
     if (q.includes("היום")) {
-      const todayStr = now.toISOString().slice(0, 10);
+      // Local calendar date, not toISOString() — that converts to UTC first and can report the
+      // wrong day for hours after local midnight in a timezone ahead of UTC.
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
       const todayEntry = monthWorkHours.find((w) => w.date === todayStr);
       const target = getEffectiveDailyTarget(todayStr, todayEntry, settings);
       const worked = todayEntry && (todayEntry.status === "worked" || !todayEntry.status) ? getCountedHours(todayEntry) : 0;

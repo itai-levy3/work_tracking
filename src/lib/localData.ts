@@ -11,6 +11,17 @@ import {
   pushWorkHour,
 } from "@/lib/supabaseSync";
 
+/**
+ * "YYYY-MM-DD" built directly from local calendar components — never via `Date#toISOString()`,
+ * which converts to UTC first. In any timezone ahead of UTC (e.g. Israel), midnight-local on the
+ * 1st (or last day) of a month rolls back a calendar day in UTC, so `new Date(y,m,1).toISOString()`
+ * silently produces the LAST day of the PREVIOUS month. That shifted every month/year date-range
+ * filter in this file one day early, which on the actual last day of a month excluded that day's
+ * own entry entirely — the "clock-in does nothing" bug.
+ */
+const localDateKey = (year: number, month: number, day: number): string =>
+  `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
 export type DayFraction = "full" | "three_quarters" | "half";
 
 /**
@@ -499,8 +510,8 @@ export const setProfileFirstName = (firstName: string) => {
 
 export const getWorkHoursForMonth = (year: number, month: number): WorkHour[] => {
   const data = readData();
-  const startDate = new Date(year, month, 1).toISOString().slice(0, 10);
-  const endDate = new Date(year, month + 1, 0).toISOString().slice(0, 10);
+  const startDate = localDateKey(year, month, 1);
+  const endDate = localDateKey(year, month, new Date(year, month + 1, 0).getDate());
   return data.workHours
     .filter((w) => w.date >= startDate && w.date <= endDate)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -1003,8 +1014,8 @@ export const deleteWorkHourByDate = (date: string) => {
 
 export const clearMonthWorkHours = (year: number, month: number) => {
   const data = readData();
-  const startDate = new Date(year, month, 1).toISOString().slice(0, 10);
-  const endDate = new Date(year, month + 1, 0).toISOString().slice(0, 10);
+  const startDate = localDateKey(year, month, 1);
+  const endDate = localDateKey(year, month, new Date(year, month + 1, 0).getDate());
   data.workHours = data.workHours.filter((w) => w.date < startDate || w.date > endDate);
   writeData(data);
   void pushDeleteWorkHoursRange(startDate, endDate);
@@ -1014,8 +1025,8 @@ export const clearMonthWorkHours = (year: number, month: number) => {
 
 export const getFoodEntriesForMonth = (year: number, month: number): FoodEntry[] => {
   const data = readData();
-  const startDate = new Date(year, month, 1).toISOString().slice(0, 10);
-  const endDate = new Date(year, month + 1, 0).toISOString().slice(0, 10);
+  const startDate = localDateKey(year, month, 1);
+  const endDate = localDateKey(year, month, new Date(year, month + 1, 0).getDate());
   return (data.foodEntries || [])
     .filter((e) => e.date >= startDate && e.date <= endDate)
     .sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || ""));

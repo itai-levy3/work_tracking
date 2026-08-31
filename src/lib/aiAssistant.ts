@@ -15,6 +15,10 @@ import {
 
 const RECENT_DAYS_WINDOW = 60;
 
+/** "YYYY-MM-DD" from local calendar components — toISOString() converts to UTC first, which in a
+ * timezone ahead of UTC can report the wrong day entirely for several hours after local midnight. */
+const localDateKey = (d: Date): string => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
 const buildContext = () => {
   const now = new Date();
   const year = now.getFullYear();
@@ -23,7 +27,7 @@ const buildContext = () => {
 
   const cutoff = new Date(now);
   cutoff.setDate(cutoff.getDate() - RECENT_DAYS_WINDOW);
-  const cutoffKey = cutoff.toISOString().slice(0, 10);
+  const cutoffKey = localDateKey(cutoff);
 
   const recentDays = getWorkHoursForYear(year)
     .filter((d) => d.date >= cutoffKey)
@@ -40,7 +44,7 @@ const buildContext = () => {
   const vacationMinimum = computeVacationMinimumStatus(settings, now);
 
   return {
-    today: now.toISOString().slice(0, 10),
+    today: localDateKey(now),
     firstName: getProfileFirstName(),
     settings: {
       workDays: settings.work_days,

@@ -141,12 +141,16 @@ const toDbWorkHour = (w: WorkHour, userId: string) => ({
   one_time_planned_hours: w.oneTimePlannedHours ?? null,
 });
 
+// Postgres' time columns round-trip as "HH:MM:SS" — trim to "HH:MM" to match what the app itself
+// ever writes (same fix as food_entries' time column).
+const trimTime = (t: string | null | undefined): string | null => (t ? String(t).slice(0, 5) : null);
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const fromDbWorkHour = (row: any): WorkHour => ({
   date: row.date,
   hours_worked: Number(row.hours_worked) || 0,
-  start_time: row.start_time,
-  end_time: row.end_time,
+  start_time: trimTime(row.start_time),
+  end_time: trimTime(row.end_time),
   segments: row.segments ?? undefined,
   status: row.status,
   fraction: row.fraction ?? undefined,

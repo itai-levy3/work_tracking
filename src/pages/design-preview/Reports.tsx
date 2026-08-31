@@ -79,7 +79,6 @@ export default function DesignPreviewReports() {
   }
 
   const totalHours = payroll.regularHours + payroll.overtimeHours;
-  const grossTotal = payroll.regularPay + payroll.overtimePay + payroll.fixedComponentsTotal + payroll.foodAllowanceAddition;
   const forecastGrossTotal =
     projectedPayroll.regularPay + projectedPayroll.overtimePay + projectedPayroll.fixedComponentsTotal + projectedPayroll.foodAllowanceAddition;
   const additionsGrandTotal = projectedPayroll.fixedComponentsTotal + projectedPayroll.foodAllowanceAddition;
@@ -213,12 +212,15 @@ export default function DesignPreviewReports() {
                     <span className="text-[12px] font-bold tracking-[0.05em] block mb-0.5" style={{ color: LH.onSurfaceVariant }}>
                       שעות נוספות שנצברו החודש · יופיעו בתלוש {MONTH_HE[(currentMonth.getMonth() + 1) % 12]}
                     </span>
-                    <span
-                      className="tabular-nums leading-none block"
-                      style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: "#00A8CC" }}
-                    >
-                      {formatHM(payroll.ownOvertimeHours)}
-                    </span>
+                    <div className="flex items-baseline gap-2">
+                      <span
+                        className="tabular-nums leading-none"
+                        style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: "#00A8CC" }}
+                      >
+                        {formatHM(payroll.ownOvertimeHours)}
+                      </span>
+                      <span className="tabular-nums text-[15px] font-bold" style={{ color: "#00A8CC" }}>{money(payroll.ownOvertimePay)}</span>
+                    </div>
                   </div>
                   <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "linear-gradient(155deg,#00A8CC,#00D2FF)", boxShadow: "0 12px 26px -8px rgba(0,168,204,0.5)" }}>
                     <span className="material-symbols-outlined text-white text-[24px]">sync_alt</span>
@@ -254,10 +256,6 @@ export default function DesignPreviewReports() {
                     far (small, factual, not a projection) beside the two totals that explain the
                     forecasted deductions/additions further down. */}
                 <div className="relative z-10 mb-5">
-                  <div className="flex items-baseline gap-2 mb-3">
-                    <span className="text-[10.5px] font-bold tracking-[0.1em] uppercase" style={{ color: "#8892b0" }}>ברוטו בפועל</span>
-                    <span className="text-[13.5px] font-bold" style={{ color: LH.onSurface }}>{money(grossTotal)}</span>
-                  </div>
                   <div className="flex flex-wrap gap-x-8 gap-y-3">
                     <div>
                       <span className="text-[10px] font-bold tracking-[0.1em] uppercase block mb-1" style={{ color: "#0F766E" }}>תוספות שכר</span>

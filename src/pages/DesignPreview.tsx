@@ -186,6 +186,10 @@ export default function DesignPreview() {
     if (!settings || settings.overtime_payout_month !== "next") return 0;
     return computeMonthlyPayroll(currentMonth.getFullYear(), currentMonth.getMonth(), settings, workHours).ownOvertimeHours;
   }, [settings, currentMonth, workHours]);
+  const accruedOvertimePayThisMonth = useMemo(() => {
+    if (!settings || settings.overtime_payout_month !== "next") return 0;
+    return computeMonthlyPayroll(currentMonth.getFullYear(), currentMonth.getMonth(), settings, workHours).ownOvertimePay;
+  }, [settings, currentMonth, workHours]);
   const nextPayoutMonthLabel = useMemo(() => {
     const d = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
     return d.toLocaleDateString("he-IL", { month: "long" });
@@ -1169,6 +1173,7 @@ export default function DesignPreview() {
               {formatHM(accruedOvertimeThisMonth)}
             </span>
             <span className="text-[13px] font-bold" style={{ color: "#8892b0" }}>שעות</span>
+            <span className="tabular-nums text-[16px] font-bold mr-1" style={{ color: "#00A8CC" }}>{`₪${Math.round(accruedOvertimePayThisMonth).toLocaleString("he-IL")}`}</span>
           </div>
           <p className="text-[12.5px] leading-relaxed mt-2" style={{ color: "#8892b0" }}>
             אצלך שעות נוספות משולמות בתלוש של החודש שאחרי — השעות האלה לא נכללות בתחזית של החודש הנוכחי, ויופיעו ישירות תחת "שעות נוספות" ויתווספו למשכורת בתלוש {nextPayoutMonthLabel}.

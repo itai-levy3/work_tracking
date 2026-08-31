@@ -7,7 +7,6 @@ import {
   computeMonthlyPayroll,
   formatHM,
   getCountedHours,
-  getPdfArchive,
   getWorkHoursForMonth,
   UserSettings,
 } from "@/lib/localData";
@@ -292,20 +291,22 @@ export const exportAnnualPayslipPdf = async (year: number, settings: UserSetting
 };
 
 /**
- * Silently archives the payslip PDF for any of the last 3 calendar months (not the current,
- * still-in-progress one) that has real work-hour data but isn't archived yet. Safe to call on
- * every app load — it's a no-op once everything is already archived. This is where the gross
- * salary actually gets written down permanently, since the live "מסע התשלום" forecast never
- * leads with it.
+ * Silently (re)archives the payslip PDF for any of the last 3 calendar months (not the current,
+ * still-in-progress one) that has real work-hour data. Safe to call on every app load — it always
+ * regenerates from the current hours/settings rather than skipping months already archived, so
+ * editing a past month's hours (e.g. fixing a forgotten clock-out a week later) automatically
+ * refreshes that month's stored PDF next time the app loads, including any knock-on change to
+ * deferred overtime (computeMonthlyPayroll already carries a month's own overtime into the
+ * following month's payroll when that setting is on, so the regenerated PDF reflects it on both
+ * sides automatically). This is where the gross salary actually gets written down permanently,
+ * since the live "מסע התשלום" forecast never leads with it.
  */
 export const autoArchiveCompletedMonths = async (settings: UserSettings, firstName = ""): Promise<void> => {
   const now = new Date();
-  const alreadyArchived = new Set(getPdfArchive().map((e) => `${e.year}-${e.month}`));
   for (let back = 1; back <= 3; back++) {
     const d = new Date(now.getFullYear(), now.getMonth() - back, 1);
     const year = d.getFullYear();
     const month = d.getMonth();
-    if (alreadyArchived.has(`${year}-${month}`)) continue;
     const entries = getWorkHoursForMonth(year, month);
     if (!entries || entries.length === 0) continue;
     const dataUrl = await generateMonthlyPayslipDataUrl(year, month, settings, firstName);
