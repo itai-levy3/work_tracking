@@ -209,11 +209,50 @@ export interface PdfArchiveEntry {
   dataUrl: string; // jsPDF's own "datauristring" output
 }
 
+/** One reason chip for a payroll deviation — "less" reasons only ever offered when the actual
+ * net was lower than estimated, "more" only when it was higher. */
+export interface PayrollDeviationReason {
+  id: string;
+  label: string;
+  direction: "less" | "more";
+}
+
+export const PAYROLL_DEVIATION_REASONS: PayrollDeviationReason[] = [
+  { id: "higher_tax", label: "ניכוי מס גבוה יותר ממה שהוזן", direction: "less" },
+  { id: "advance_or_loan", label: "מקדמה או הלוואה שקוזזה", direction: "less" },
+  { id: "unreported_absence", label: "ימי היעדרות שלא דווחו במערכת", direction: "less" },
+  { id: "penalty_or_delay", label: "קנס או עיכוב תשלום", direction: "less" },
+  { id: "missing_deduction", label: "ניכוי אחר שלא הוגדר בהגדרות", direction: "less" },
+  { id: "less_other", label: "משהו אחר", direction: "less" },
+  { id: "bonus", label: "בונוס או מענק", direction: "more" },
+  { id: "expense_reimbursement", label: "החזר הוצאות", direction: "more" },
+  { id: "retroactive_fix", label: "תיקון רטרואקטיבי מחודש קודם", direction: "more" },
+  { id: "missing_addition", label: "תוספת אחרת שלא הוגדרה בהגדרות", direction: "more" },
+  { id: "more_other", label: "משהו אחר", direction: "more" },
+];
+
+/**
+ * One month's reconciliation between the app's own computed net pay and what the user actually
+ * received — logged locally only (not synced to Supabase yet) so future months can eventually
+ * learn from the pattern. `aiAnalysis` holds the AI assistant's free-text read on `note`.
+ */
+export interface PayrollActual {
+  year: number;
+  month: number; // 0-indexed
+  actualNet: number;
+  estimatedNet: number;
+  reasonId?: string;
+  note?: string;
+  aiAnalysis?: string;
+  updatedAt: string; // ISO timestamp
+}
+
 interface LocalDataShape {
   settings: UserSettings;
   workHours: WorkHour[];
   foodEntries: FoodEntry[];
   pdfArchive: PdfArchiveEntry[];
+  payrollActuals: PayrollActual[];
   profile: {
     firstName: string;
   };
@@ -294,6 +333,7 @@ const defaultData: LocalDataShape = {
   workHours: [],
   foodEntries: [],
   pdfArchive: [],
+  payrollActuals: [],
   profile: {
     firstName: "WorkTrack",
   },
@@ -385,6 +425,7 @@ const safeParseUserData = (raw: string | null): LocalDataShape => {
       workHours: Array.isArray(parsed.workHours) ? parsed.workHours : [],
       foodEntries: Array.isArray(parsed.foodEntries) ? parsed.foodEntries : [],
       pdfArchive: Array.isArray(parsed.pdfArchive) ? parsed.pdfArchive : [],
+      payrollActuals: Array.isArray(parsed.payrollActuals) ? parsed.payrollActuals : [],
       profile: {
         firstName: parsed.profile?.firstName || "WorkTrack",
       },
@@ -1072,6 +1113,20 @@ export const archiveMonthlyPdf = (year: number, month: number, dataUrl: string) 
   void pushPdfArchiveEntry(entry);
 };
 
+// ---- Actual-vs-estimated net pay reconciliation (local only, not yet synced to Supabase) ----
+
+export const getPayrollActual = (year: number, month: number): PayrollActual | undefined => {
+  const data = readData();
+  return (data.payrollActuals || []).find((e) => e.year === year && e.month === month);
+};
+
+export const savePayrollActual = (entry: Omit<PayrollActual, "updatedAt">) => {
+  const data = readData();
+  const rest = (data.payrollActuals || []).filter((e) => !(e.year === entry.year && e.month === entry.month));
+  data.payrollActuals = [...rest, { ...entry, updatedAt: new Date().toISOString() }];
+  writeData(data);
+};
+
 export const exportLocalBackup = (): LocalBackupFile => {
   const data = readData();
   return {
@@ -1125,6 +1180,8 @@ export const syncAfterLogin = async (pulled: PulledData): Promise<void> => {
       workHours: pulled.workHours,
       foodEntries: pulled.foodEntries,
       pdfArchive: pulled.pdfArchive,
+      // Not synced to Supabase yet — always keep whatever's already on this device.
+      payrollActuals: data.payrollActuals,
       profile: { firstName: pulled.firstName || data.profile.firstName || "WorkTrack" },
     });
     return;

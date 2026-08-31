@@ -84,3 +84,26 @@ export const askAiAssistant = async (question: string): Promise<string> => {
   if (!resp.ok) throw new Error(data.error || "שגיאה בשירות ה-AI");
   return String(data.answer || "");
 };
+
+/** Sends one month's estimated-vs-actual net pay gap (plus whatever the user typed about it) to
+ * the same AI assistant, asking for a likely explanation and a concrete settings fix so future
+ * months land closer to what's actually received. */
+export const analyzePayrollDeviation = async (params: {
+  year: number;
+  month: number;
+  estimatedNet: number;
+  actualNet: number;
+  reasonLabel?: string;
+  note: string;
+}): Promise<string> => {
+  const { year, month, estimatedNet, actualNet, reasonLabel, note } = params;
+  const diff = actualNet - estimatedNet;
+  const question = `נתח פער בין המשכורת שהאפליקציה חישבה למשכורת שהתקבלה בפועל, והצע הסבר קצר וממוקד בעברית, ואם יש הגדרה קונקרטית באפליקציה (ניכוי ידני, אחוז מס, פנסיה, תוספת קבועה וכו') שכדאי לעדכן כדי שהחישוב יהיה מדויק יותר בחודשים הבאים — הצע אותה בפירוש.
+חודש: ${month + 1}/${year}
+נטו משוער במערכת: ₪${Math.round(estimatedNet)}
+נטו בפועל שהתקבל: ₪${Math.round(actualNet)}
+הפרש: ${diff >= 0 ? "+" : ""}₪${Math.round(diff)}
+סיבה שהמשתמש בחר: ${reasonLabel || "לא נבחרה סיבה ספציפית"}
+תיאור חופשי מהמשתמש: ${note || "(לא הוזן)"}`;
+  return askAiAssistant(question);
+};

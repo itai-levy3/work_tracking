@@ -2,14 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { analyzePayrollDeviation } from "@/lib/aiAssistant";
 import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import {
   computeEffectiveHourlyRateForMonth,
   computeMonthlyPayroll,
   computeProjectedMonthlyPayroll,
   formatHM,
+  getPayrollActual,
   getProfileFirstName,
   getSettings,
+  PAYROLL_DEVIATION_REASONS,
+  savePayrollActual,
   UserSettings,
 } from "@/lib/localData";
 import { exportMonthlyPayslipPdf } from "@/lib/pdfExport";
@@ -25,6 +29,23 @@ export default function DesignPreviewReports() {
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [currentMonth, setCurrentMonth] = useState(() => new Date());
   const [salaryForecastOpen, setSalaryForecastOpen] = useState(false);
+
+  // Actual-vs-estimated net pay reconciliation for the viewed month.
+  const [actualNetInput, setActualNetInput] = useState("");
+  const [deviationReasonId, setDeviationReasonId] = useState<string | undefined>(undefined);
+  const [deviationNote, setDeviationNote] = useState("");
+  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+  const [aiAnalysisLoading, setAiAnalysisLoading] = useState(false);
+  const [actualSaved, setActualSaved] = useState(false);
+
+  useEffect(() => {
+    const existing = getPayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
+    setActualNetInput(existing ? String(Math.round(existing.actualNet)) : "");
+    setDeviationReasonId(existing?.reasonId);
+    setDeviationNote(existing?.note || "");
+    setAiAnalysis(existing?.aiAnalysis || null);
+    setActualSaved(!!existing);
+  }, [currentMonth]);
 
   useEffect(() => {
     if (!isLocalAuthenticated()) {
@@ -89,6 +110,48 @@ export default function DesignPreviewReports() {
   const basePctAchieved = baseSalaryTarget > 0 ? (earnedPay / baseSalaryTarget) * 100 : 0;
   const bonusFromOvertimePct = Math.max(0, basePctAchieved - 100);
   const arcFillPct = Math.min(100, basePctAchieved);
+
+  const actualNetValue = parseFloat(actualNetInput);
+  const hasActualNet = actualNetInput.trim() !== "" && !Number.isNaN(actualNetValue);
+  const deviation = hasActualNet ? actualNetValue - payroll.netPay : 0;
+  const deviationDirection: "less" | "more" | null = hasActualNet && Math.abs(deviation) > 1 ? (deviation < 0 ? "less" : "more") : null;
+  const deviationReasonOptions = deviationDirection ? PAYROLL_DEVIATION_REASONS.filter((r) => r.direction === deviationDirection) : [];
+
+  const saveActualNet = () => {
+    if (!hasActualNet) return;
+    savePayrollActual({
+      year: currentMonth.getFullYear(),
+      month: currentMonth.getMonth(),
+      actualNet: actualNetValue,
+      estimatedNet: payroll.netPay,
+      reasonId: deviationReasonId,
+      note: deviationNote.trim() || undefined,
+      aiAnalysis: aiAnalysis || undefined,
+    });
+    setActualSaved(true);
+    toast.success("נשמר");
+  };
+
+  const runAiAnalysis = async () => {
+    if (!hasActualNet) return;
+    setAiAnalysisLoading(true);
+    try {
+      const reasonLabel = deviationReasonOptions.find((r) => r.id === deviationReasonId)?.label;
+      const result = await analyzePayrollDeviation({
+        year: currentMonth.getFullYear(),
+        month: currentMonth.getMonth(),
+        estimatedNet: payroll.netPay,
+        actualNet: actualNetValue,
+        reasonLabel,
+        note: deviationNote,
+      });
+      setAiAnalysis(result);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "שגיאה בניתוח");
+    } finally {
+      setAiAnalysisLoading(false);
+    }
+  };
 
   return (
     <div dir="rtl" className="min-h-screen w-full flex flex-col" style={{ background: LH.background, color: LH.onSurface, fontFamily: "'Heebo', system-ui, sans-serif" }}>
@@ -176,6 +239,108 @@ export default function DesignPreviewReports() {
                 </span>
               </div>
             )}
+          </div>
+
+          {/* Actual net pay reconciliation — what the estimate above should learn from */}
+          <div
+            className="lh-rise pb-8 relative z-10"
+            style={{ animationDelay: "90ms" }}
+          >
+            <div className="rounded-[28px] p-6 relative overflow-hidden" style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}>
+              <div className="flex items-center gap-2 mb-4">
+                <span className="material-symbols-outlined text-[18px]" style={{ color: LH.primary }}>fact_check</span>
+                <span className="text-[13px] font-extrabold tracking-[0.1em] uppercase" style={{ color: LH.onSurfaceVariant }}>שכר נטו בפועל</span>
+              </div>
+
+              <label className="text-[11px] font-bold block mb-1.5" style={{ color: LH.onSurfaceVariant }}>כמה קיבלת בפועל בתלוש של {MONTH_HE[currentMonth.getMonth()]}?</label>
+              <div className="flex items-center gap-2 mb-1">
+                <input
+                  type="number"
+                  value={actualNetInput}
+                  onChange={(e) => { setActualNetInput(e.target.value); setActualSaved(false); }}
+                  placeholder="0"
+                  className="flex-1 h-12 rounded-2xl px-4 text-[18px] font-bold"
+                  style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
+                />
+                <span className="text-[13px] font-bold" style={{ color: LH.onSurfaceVariant }}>₪ נטו</span>
+              </div>
+              <span className="text-[11px]" style={{ color: LH.onSurfaceVariant }}>המערכת חישבה {money(payroll.netPay)} — זה עוזר לאתר איפה יש סטייה ולתקן קדימה.</span>
+
+              {deviationDirection && (
+                <div className="mt-4 flex flex-col gap-3">
+                  <div
+                    className="rounded-2xl px-4 py-3 flex items-center gap-2"
+                    style={{ background: deviationDirection === "less" ? "rgba(220,38,38,0.08)" : "rgba(15,118,110,0.08)" }}
+                  >
+                    <span className="material-symbols-outlined text-[16px]" style={{ color: deviationDirection === "less" ? "#DC2626" : "#0F766E" }}>
+                      {deviationDirection === "less" ? "trending_down" : "trending_up"}
+                    </span>
+                    <span className="text-[12.5px] font-bold" style={{ color: deviationDirection === "less" ? "#DC2626" : "#0F766E" }}>
+                      {deviationDirection === "less" ? "קיבלת פחות מהצפוי" : "קיבלת יותר מהצפוי"} — הפרש של {money(Math.abs(deviation))}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-[11px] font-bold block mb-2" style={{ color: LH.onSurfaceVariant }}>
+                      {deviationDirection === "less" ? "מה עשוי להסביר את ההורדה?" : "מה עשוי להסביר את התוספת?"}
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      {deviationReasonOptions.map((r) => (
+                        <button
+                          key={r.id}
+                          onClick={() => { setDeviationReasonId(r.id); setActualSaved(false); }}
+                          className="px-3 py-1.5 rounded-full text-[11.5px] font-bold"
+                          style={{
+                            background: deviationReasonId === r.id ? LH.primary : `${LH.primary}0F`,
+                            color: deviationReasonId === r.id ? "#fff" : LH.primary,
+                          }}
+                        >
+                          {r.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold block mb-1" style={{ color: LH.onSurfaceVariant }}>תיאור חופשי (אופציונלי)</label>
+                    <textarea
+                      value={deviationNote}
+                      onChange={(e) => { setDeviationNote(e.target.value); setActualSaved(false); }}
+                      placeholder='למשל: "השכר היה נמוך יותר בגלל יום מחלה שלא דיווחתי במערכת"'
+                      rows={2}
+                      className="w-full rounded-2xl px-3 py-2 text-[13px] resize-none"
+                      style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
+                    />
+                  </div>
+
+                  <button
+                    onClick={() => void runAiAnalysis()}
+                    disabled={aiAnalysisLoading}
+                    className="w-full h-11 rounded-2xl font-bold text-white flex items-center justify-center gap-2 disabled:opacity-60"
+                    style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)" }}
+                  >
+                    <span className="material-symbols-outlined text-[18px]">auto_awesome</span>
+                    {aiAnalysisLoading ? "מנתח..." : "נתח עם AI"}
+                  </button>
+
+                  {aiAnalysis && (
+                    <div className="rounded-2xl px-4 py-3" style={{ background: `${LH.primary}0A` }}>
+                      <span className="text-[10.5px] font-bold tracking-[0.08em] uppercase block mb-1.5" style={{ color: LH.primary }}>ניתוח ה-AI</span>
+                      <p className="text-[12.5px] leading-relaxed" style={{ color: LH.onSurface }}>{aiAnalysis}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <button
+                onClick={saveActualNet}
+                disabled={!hasActualNet}
+                className="w-full h-11 rounded-2xl font-bold mt-4 disabled:opacity-50"
+                style={{ background: actualSaved ? "rgba(15,118,110,0.1)" : `${LH.primary}0F`, color: actualSaved ? "#0F766E" : LH.primary }}
+              >
+                {actualSaved ? "נשמר ✓" : "שמירה"}
+              </button>
+            </div>
           </div>
 
           {/* Payroll breakdown */}
