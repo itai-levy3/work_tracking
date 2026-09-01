@@ -19,7 +19,7 @@ import { STATUS_META } from "./tokens";
 
 /** Statuses that behave like a non-worked day: fixed hours from the daily target, no time entry. */
 const OFF_LIKE_STATUSES: DayStatus[] = ["vacation", "sick", "holiday", "off"];
-const FRACTION_LABEL: Record<DayFraction, string> = { full: "יום מלא", three_quarters: "3/4 יום", half: "חצי יום" };
+const FRACTION_LABEL: Record<DayFraction, string> = { full: "יום מלא", three_quarters: "3/4 יום", half: "חצי יום", quarter: "1/4 יום" };
 
 const WEEKDAY_HE_LONG = ["יום ראשון", "יום שני", "יום שלישי", "יום רביעי", "יום חמישי", "יום שישי", "שבת"];
 const MONTH_HE = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
@@ -725,7 +725,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                   <div>
                     <label className="text-[11px] font-bold block mb-1" style={{ color: "#46464f" }}>חלקיות</label>
                     <div className="flex gap-2">
-                      {(["full", "three_quarters", "half"] as DayFraction[]).map((f) => (
+                      {(["full", "three_quarters", "half", "quarter"] as DayFraction[]).map((f) => (
                         <button
                           key={f}
                           onClick={() => setDraft((d) => ({ ...d, fraction: f }))}

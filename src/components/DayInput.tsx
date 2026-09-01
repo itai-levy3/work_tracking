@@ -23,6 +23,7 @@ const fractionLabels: Record<DayFraction, string> = {
   full: "יום מלא",
   three_quarters: "3/4 יום",
   half: "חצי יום",
+  quarter: "1/4 יום",
 };
 
 const statusConfig: Record<string, { label: string; icon: any; bgClass: string; borderClass: string; emoji: string }> = {

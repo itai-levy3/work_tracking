@@ -109,9 +109,18 @@ export default function DesignPreviewReports() {
   }
 
   const totalHours = payroll.regularHours + payroll.overtimeHours;
-  const forecastGrossTotal =
-    projectedPayroll.regularPay + projectedPayroll.overtimePay + projectedPayroll.fixedComponentsTotal + projectedPayroll.foodAllowanceAddition;
+  // "ברוטו" as defined in Settings: by default (fixed_components_in_gross = true) it's the
+  // historical merged figure (base + overtime + fixed additions + food). When the user's real
+  // payslip reports gross as base pay only — with travel/other additions paid on top, separately —
+  // flipping the toggle off makes baseGrossPay the ברוטו figure and additions become their own line
+  // reaching a grand total. forecastGrossTotal always stays the true sum of everything before
+  // deductions; it's the denominator for the composition bar/deduction shares below regardless of
+  // the toggle, never itself labeled "ברוטו" in the UI.
+  const includeAdditionsInGross = settings.fixed_components_in_gross ?? true;
+  const baseGrossPay = projectedPayroll.regularPay + projectedPayroll.overtimePay;
   const additionsGrandTotal = projectedPayroll.fixedComponentsTotal + projectedPayroll.foodAllowanceAddition;
+  const forecastGrossTotal = baseGrossPay + additionsGrandTotal;
+  const grossDisplayTotal = includeAdditionsInGross ? forecastGrossTotal : baseGrossPay;
   const deductionsGrandTotal = forecastGrossTotal - projectedPayroll.netPay;
   const effectiveHourlyRate = computeEffectiveHourlyRateForMonth(currentMonth.getFullYear(), currentMonth.getMonth(), settings);
   const baseSalaryTarget = monthlyGoalHours * effectiveHourlyRate;
@@ -686,9 +695,28 @@ export default function DesignPreviewReports() {
             <div className="flex items-center justify-between rounded-[18px] px-5 py-4" style={{ background: LH.surfaceContainerLow }}>
               <span className="text-[13px] font-bold" style={{ color: LH.onSurfaceVariant }}>ברוטו</span>
               <span dir="ltr" className="tabular-nums" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.01em", color: LH.onSurface }}>
-                {money(forecastGrossTotal)}
+                {money(grossDisplayTotal)}
               </span>
             </div>
+
+            {/* When gross is base-pay-only, show the additions and the grand total they reach so
+                the numbers still visibly add up. */}
+            {!includeAdditionsInGross && additionsGrandTotal > 0 && (
+              <>
+                <div className="flex items-center justify-between rounded-[18px] px-5 py-4" style={{ background: "rgba(15,118,110,0.07)" }}>
+                  <span className="text-[13px] font-bold" style={{ color: "#0F766E" }}>תוספות (נסיעות וכו׳)</span>
+                  <span dir="ltr" className="tabular-nums" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.01em", color: "#0F766E" }}>
+                    +{money(additionsGrandTotal)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between rounded-[18px] px-5 py-4" style={{ background: `${LH.primary}0F` }}>
+                  <span className="text-[13px] font-bold" style={{ color: LH.onSurface }}>סה״כ כולל תוספות</span>
+                  <span dir="ltr" className="tabular-nums" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.01em", color: LH.onSurface }}>
+                    {money(forecastGrossTotal)}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
 
           {settings.overtime_payout_month === "next" && payroll.ownOvertimeHours > 0 && (

@@ -712,6 +712,18 @@ export default function DesignPreviewSettings() {
                 );
               }}
             />
+            {settings.fixed_components && settings.fixed_components.length > 0 && (
+              <ToggleRow
+                title="תוספות בתוך הברוטו"
+                value={
+                  (settings.fixed_components_in_gross ?? true)
+                    ? "פעיל: הברוטו כולל את התוספות (נסיעות וכו')"
+                    : "כבוי: הברוטו הוא שכר הבסיס בלבד, התוספות מוצגות בנפרד ומתווספות לסך הכולל"
+                }
+                on={settings.fixed_components_in_gross ?? true}
+                onChange={(v) => persist({ ...settings, fixed_components_in_gross: v })}
+              />
+            )}
             <Row
               title="תוספות לניכויים"
               value={settings.deductions && settings.deductions.length ? `${settings.deductions.length} ניכויים · ${settings.deductions.reduce((s, d) => s + d.amount, 0).toFixed(0)} ₪` : "אין ניכויים"}

@@ -23,7 +23,7 @@ import {
 const localDateKey = (year: number, month: number, day: number): string =>
   `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 
-export type DayFraction = "full" | "three_quarters" | "half";
+export type DayFraction = "full" | "three_quarters" | "half" | "quarter";
 
 /**
  * "worked" (default) | "vacation" | "sick" | "holiday" (חג — always paid in full, never counted
@@ -90,6 +90,8 @@ export const fractionMultiplier = (fraction: DayFraction | undefined): number =>
       return 0.75;
     case "half":
       return 0.5;
+    case "quarter":
+      return 0.25;
     default:
       return 1;
   }
@@ -145,6 +147,13 @@ export interface UserSettings {
   overtime_payout_month?: "current" | "next";
   /** Fixed monthly additions (e.g. travel allowance) added to every month's payroll report. */
   fixed_components?: PayLineItem[];
+  /**
+   * true (default) = the "ברוטו" figure shown includes fixed_components/food allowance, matching
+   * how it was always shown. false = "ברוטו" is base pay only (regular + overtime, whatever the
+   * cap or hourly rate produces) with fixed_components/food shown as separate additions on top —
+   * for anyone whose real payslip reports gross that way instead.
+   */
+  fixed_components_in_gross?: boolean;
   /** Fixed monthly deductions (e.g. pension) subtracted from every month's payroll report. */
   deductions?: PayLineItem[];
   /** Total vacation/sick days granted per calendar year. */
@@ -321,6 +330,7 @@ const defaultSettings: UserSettings = {
   overtime_round_hours: false,
   overtime_payout_month: "current",
   fixed_components: [],
+  fixed_components_in_gross: true,
   deductions: [],
   annual_vacation_days: 12,
   annual_sick_days: 18,
@@ -385,6 +395,7 @@ const safeParseUserData = (raw: string | null): LocalDataShape => {
         overtime_round_hours: parsed.settings?.overtime_round_hours ?? defaultSettings.overtime_round_hours,
         overtime_payout_month: parsed.settings?.overtime_payout_month ?? defaultSettings.overtime_payout_month,
         fixed_components: Array.isArray(parsed.settings?.fixed_components) ? parsed.settings.fixed_components : defaultSettings.fixed_components,
+        fixed_components_in_gross: parsed.settings?.fixed_components_in_gross ?? defaultSettings.fixed_components_in_gross,
         deductions: Array.isArray(parsed.settings?.deductions) ? parsed.settings.deductions : defaultSettings.deductions,
         annual_vacation_days:
           typeof parsed.settings?.annual_vacation_days === "number"
