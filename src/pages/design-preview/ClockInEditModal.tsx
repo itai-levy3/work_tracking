@@ -112,10 +112,10 @@ export function ClockInEditModal({ open, date, entry, onClose, onSaved }: ClockI
                   {draftTime || "--:--"}
                 </span>
                 <div
-                  className="absolute -top-1 -right-4 w-8 h-8 rounded-full flex items-center justify-center pointer-events-none"
-                  style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 6px 14px -4px rgba(118,57,255,0.55), 0 0 0 3px #fff" }}
+                  className="absolute flex items-center justify-center pointer-events-none"
+                  style={{ top: -8, right: -34, width: 28, height: 28, borderRadius: "50%", background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 6px 14px -4px rgba(118,57,255,0.55), 0 0 0 3px #fff" }}
                 >
-                  <span className="material-symbols-outlined text-white" style={{ fontSize: 15 }}>edit</span>
+                  <span className="material-symbols-outlined text-white" style={{ fontSize: 14 }}>edit</span>
                 </div>
               </div>
               <input
