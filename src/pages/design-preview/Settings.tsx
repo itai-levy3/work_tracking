@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import {
   AccrualMethod,
   computeEffectiveHourlyRateForMonth,
+  computeMonthlyPayroll,
   enableFoodTracking,
   exportLocalBackup,
   formatHM,
@@ -197,6 +198,8 @@ export default function DesignPreviewSettings() {
   const [exportYear, setExportYear] = useState(new Date().getFullYear());
   const [busy, setBusy] = useState(false);
   const restoreInputRef = useRef<HTMLInputElement>(null);
+  const [annualReportsOpen, setAnnualReportsOpen] = useState(false);
+  const [annualReportsYear, setAnnualReportsYear] = useState(() => new Date().getFullYear());
 
   const [recoveryConfigured, setRecoveryConfigured] = useState(false);
   const [recoveryChallengeOpen, setRecoveryChallengeOpen] = useState(false);
@@ -842,6 +845,10 @@ export default function DesignPreviewSettings() {
               value={settings.employment_start_date ? new Date(`${settings.employment_start_date}T00:00:00`).toLocaleDateString("he-IL") : "לא הוגדר"}
               onClick={openLeaveDialog}
             />
+          </Section>
+
+          <Section icon="summarize" title="דוחות">
+            <Row title="דוחות שנתיים" value="סיכום שכר נטו/ברוטו לפי שנה" onClick={() => setAnnualReportsOpen(true)} />
           </Section>
 
           {/* Backup & restore — always visible and dead simple, so switching phones is a 2-tap job */}
@@ -1567,6 +1574,76 @@ export default function DesignPreviewSettings() {
             ))}
           </div>
           <button onClick={saveRecoveryDraft} className="w-full h-11 rounded-xl font-bold text-white mt-4" style={{ background: LH.primary }}>שמירה</button>
+        </DialogContent>
+      </Dialog>
+
+      {/* Annual reports — summed live from the current data (not a frozen snapshot), so a later
+          correction to a past month's hours is reflected here automatically. */}
+      <Dialog open={annualReportsOpen} onOpenChange={setAnnualReportsOpen}>
+        <DialogContent className={dialogClassName} style={{ background: LH.background, fontFamily: "'Heebo', system-ui, sans-serif", maxHeight: "85vh", overflowY: "auto" }} dir="rtl">
+          <DialogHeader>
+            <DialogTitle style={{ color: LH.onSurface }}>דוחות שנתיים</DialogTitle>
+          </DialogHeader>
+          {(() => {
+            let totalGross = 0;
+            let totalNet = 0;
+            let totalDeductions = 0;
+            let monthsWithData = 0;
+            for (let m = 0; m < 12; m++) {
+              const p = computeMonthlyPayroll(annualReportsYear, m, settings);
+              if (p.regularHours === 0 && p.overtimeHours === 0 && p.fixedComponentsTotal === 0) continue;
+              monthsWithData += 1;
+              totalGross += p.regularPay + p.overtimePay + p.fixedComponentsTotal + p.foodAllowanceAddition;
+              totalNet += p.netPay;
+              totalDeductions += p.statutory.totalStatutoryDeductions + p.deductionsTotal;
+            }
+            return (
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-center gap-6">
+                  <button onClick={() => setAnnualReportsYear((y) => y - 1)} style={{ color: LH.onSurfaceVariant }}>
+                    <span className="material-symbols-outlined">chevron_right</span>
+                  </button>
+                  <span className="text-[17px] font-bold" style={{ color: LH.onSurface }}>{annualReportsYear}</span>
+                  <button onClick={() => setAnnualReportsYear((y) => Math.min(new Date().getFullYear(), y + 1))} style={{ color: LH.onSurfaceVariant }}>
+                    <span className="material-symbols-outlined">chevron_left</span>
+                  </button>
+                </div>
+
+                {monthsWithData === 0 ? (
+                  <p className="text-[13px] text-center" style={{ color: LH.onSurfaceVariant }}>אין נתונים רשומים לשנת {annualReportsYear}.</p>
+                ) : (
+                  <>
+                    <div className="rounded-2xl p-5" style={{ background: LH.primary }}>
+                      <span className="text-[10.5px] font-bold uppercase tracking-[0.08em] block mb-1" style={{ color: "rgba(255,255,255,0.65)" }}>סה״כ נטו לשנה</span>
+                      <span dir="ltr" className="tabular-nums block" style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 28, fontWeight: 800, color: "#fff" }}>₪{Math.round(totalNet).toLocaleString("he-IL")}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-2xl p-4" style={{ background: LH.surfaceContainerLow }}>
+                        <span className="text-[10px] font-bold uppercase tracking-[0.08em] block mb-1" style={{ color: LH.onSurfaceVariant }}>סה״כ ברוטו</span>
+                        <span dir="ltr" className="tabular-nums block" style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 17, fontWeight: 800, color: LH.onSurface }}>₪{Math.round(totalGross).toLocaleString("he-IL")}</span>
+                      </div>
+                      <div className="rounded-2xl p-4" style={{ background: "rgba(220,38,38,0.06)" }}>
+                        <span className="text-[10px] font-bold uppercase tracking-[0.08em] block mb-1" style={{ color: "#DC2626" }}>סה״כ ניכויים</span>
+                        <span dir="ltr" className="tabular-nums block" style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 17, fontWeight: 800, color: "#DC2626" }}>₪{Math.round(totalDeductions).toLocaleString("he-IL")}</span>
+                      </div>
+                    </div>
+                    <span className="text-[11px]" style={{ color: LH.onSurfaceVariant }}>{monthsWithData} חודשים עם נתונים</span>
+                    <button
+                      onClick={async () => {
+                        const ok = await exportAnnualPayslipPdf(annualReportsYear, settings, firstName);
+                        if (!ok) toast.error(`אין נתונים לשנת ${annualReportsYear}`);
+                      }}
+                      className="w-full h-11 rounded-xl font-bold text-white flex items-center justify-center gap-2"
+                      style={{ background: LH.primary }}
+                    >
+                      <span className="material-symbols-outlined text-[18px]">download</span>
+                      הורדת תלוש שנתי PDF
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </div>

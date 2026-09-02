@@ -1092,6 +1092,89 @@ export const computeMonthlyPayroll = (year: number, month: number, settings: Use
 };
 
 /**
+ * "שכר נטו נוכחי" — net pay as it actually stands right now, mid-month, instead of the full-month
+ * forecast. Regular/overtime pay is already naturally "to date" (there's no data for days that
+ * haven't happened yet). Flat monthly additions (fixed components, food allowance) and flat manual
+ * deductions are prorated by how much of the month's scheduled work days have elapsed so far — a
+ * ₪300 addition for the month becomes ₪300 × (scheduled work days so far / scheduled work days in
+ * the month), rising day by day regardless of whether a given day was worked, vacation, or holiday
+ * (it's a schedule-based proration, not a worked-days one — the addition is owed regardless).
+ * Automatic statutory deductions already recompute correctly from the smaller to-date gross with no
+ * extra work; manual ones are prorated the same way as the flat additions.
+ */
+export const computeCurrentMonthToDatePayroll = (year: number, month: number, settings: UserSettings): MonthlyPayroll => {
+  const raw = computeRawMonthPay(year, month, settings);
+  const { regularHours, overtimeHours, regularPay, overtimePay, daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay } = raw;
+
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const today = new Date();
+  const isCurrentMonth = today.getFullYear() === year && today.getMonth() === month;
+  const lastDay = isCurrentMonth ? today.getDate() : daysInMonth;
+  let scheduledInMonth = 0;
+  let scheduledSoFar = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const weekday = new Date(year, month, d).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
+    if (settings.work_days[weekday]) {
+      scheduledInMonth += 1;
+      if (d <= lastDay) scheduledSoFar += 1;
+    }
+  }
+  const ratio = scheduledInMonth > 0 ? Math.min(1, scheduledSoFar / scheduledInMonth) : 0;
+
+  const fixedComponentsTotal = (settings.fixed_components || []).reduce((s, c) => s + (c.amount || 0), 0) * ratio;
+  const deductionsTotal = (settings.deductions || []).reduce((s, d) => s + (d.amount || 0), 0) * ratio;
+
+  const grossForTax = regularPay + overtimePay + fixedComponentsTotal;
+  const statutory = calculateStatutoryPayroll(
+    grossForTax,
+    {
+      taxCreditPoints: settings.tax_credit_points ?? 2.25,
+      deductionMode: settings.statutory_deduction_mode ?? "manual",
+      manualIncomeTax: (settings.manual_income_tax ?? 0) * ratio,
+      manualNationalInsurance: (settings.manual_national_insurance ?? 0) * ratio,
+      manualHealthInsurance: (settings.manual_health_insurance ?? 0) * ratio,
+      pensionEnabled: !!settings.pension_enabled,
+      pensionEmployeeRate: (settings.pension_employee_rate ?? 6) / 100,
+      pensionableBase: settings.pension_base_mode ?? "full",
+      pensionableCustomAmount: settings.pension_custom_base,
+      trainingFundEnabled: !!settings.training_fund_enabled,
+      trainingFundEmployeeRate: (settings.training_fund_employee_rate ?? 2.5) / 100,
+      trainingFundBase: settings.training_fund_base_mode ?? "full",
+      trainingFundCustomAmount: settings.training_fund_custom_base,
+    },
+    year,
+  );
+
+  const foodBakedIntoSalary = !!settings.food_card_enabled && !settings.food_card_has_card;
+  const foodAllowanceAddition = foodBakedIntoSalary ? (settings.food_card_monthly_amount || 0) * ratio : 0;
+  const foodExpenseDeduction = foodBakedIntoSalary
+    ? getFoodEntriesForMonth(year, month).reduce((s, e) => s + (e.cardAmount || 0) + (e.personalTopUp || 0), 0)
+    : 0;
+
+  const netPay = regularPay + overtimePay + fixedComponentsTotal - deductionsTotal - statutory.totalStatutoryDeductions + foodAllowanceAddition - foodExpenseDeduction;
+
+  return {
+    regularHours,
+    overtimeHours,
+    regularPay,
+    overtimePay,
+    ownOvertimeHours: raw.overtimeHours,
+    ownOvertimePay: raw.overtimePay,
+    fixedComponentsTotal,
+    deductionsTotal,
+    netPay,
+    daysWorked,
+    unpaidLeaveDays,
+    unpaidOffDays,
+    holidayDays,
+    perDay,
+    statutory,
+    foodAllowanceAddition,
+    foodExpenseDeduction,
+  };
+};
+
+/**
  * computeMonthlyPayroll, but patched with a single CORRECTABLE_PAYROLL_FIELDS override for this
  * one month only — used to preview and apply a "fix just this month" choice from the payroll
  * reconciliation card without touching the user's real settings at all. `overrideField` outside

@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { analyzePayrollDeviation } from "@/lib/aiAssistant";
 import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import {
+  computeCurrentMonthToDatePayroll,
   computeEffectiveHourlyRateForMonth,
   computeMonthlyPayrollWithOverride,
   computeProjectedMonthlyPayroll,
@@ -115,6 +116,14 @@ export default function DesignPreviewReports() {
     return computeProjectedMonthlyPayroll(currentMonth.getFullYear(), currentMonth.getMonth(), settings);
   }, [settings, currentMonth]);
 
+  // Net pay exactly as it stands right now, mid-month — flat additions/deductions prorated by how
+  // much of the month's scheduled work days have elapsed, instead of the full-month forecast.
+  const [currentNetOpen, setCurrentNetOpen] = useState(false);
+  const currentToDatePayroll = useMemo(() => {
+    if (!settings) return null;
+    return computeCurrentMonthToDatePayroll(currentMonth.getFullYear(), currentMonth.getMonth(), settings);
+  }, [settings, currentMonth]);
+
   // Scheduled base-salary target for the viewed month (hours × rate, no overtime) — what the arc
   // gauge below measures progress against.
   const monthlyGoalHours = useMemo(() => {
@@ -130,7 +139,7 @@ export default function DesignPreviewReports() {
     return total;
   }, [settings, currentMonth]);
 
-  if (loading || !settings || !payroll || !projectedPayroll) {
+  if (loading || !settings || !payroll || !projectedPayroll || !currentToDatePayroll) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: LH.background }}>
         <div className="w-12 h-12 rounded-full border-2 animate-spin" style={{ borderColor: `${LH.primary}33`, borderTopColor: LH.primary }} />
@@ -695,6 +704,27 @@ export default function DesignPreviewReports() {
                 <span className="material-symbols-outlined text-[22px] shrink-0" style={{ color: LH.onSurfaceVariant }}>chevron_left</span>
               </button>
 
+              {/* Net pay exactly as it stands right now — deductions/additions prorated to date,
+                  not projected to month-end. Only meaningful mid-month. */}
+              {isCurrentMonth && (
+                <button
+                  onClick={() => setCurrentNetOpen(true)}
+                  className="col-span-2 rounded-[24px] p-5 flex items-center justify-between gap-3 text-right transition-transform active:scale-[0.98]"
+                  style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "rgba(15,118,110,0.08)" }}>
+                      <span className="material-symbols-outlined text-[22px]" style={{ color: "#0F766E" }}>account_balance_wallet</span>
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-[14px] font-bold block truncate" style={{ color: LH.onSurface }}>שכר נטו נוכחי</span>
+                      <span className="text-[11px] font-medium" style={{ color: LH.onSurfaceVariant }}>נכון להיום · כולל ניכויים ותוספות יחסיים</span>
+                    </div>
+                  </div>
+                  <span className="material-symbols-outlined text-[22px] shrink-0" style={{ color: LH.onSurfaceVariant }}>chevron_left</span>
+                </button>
+              )}
+
               {/* Saved payslip PDF for the month currently being viewed — the last 3 months are
                   archived automatically; older ones are fetched on demand from Supabase. */}
               {!isCurrentMonth &&
@@ -798,6 +828,50 @@ export default function DesignPreviewReports() {
               </span>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Current net pay — deductions/additions prorated to date, not projected to month-end */}
+      <Dialog open={currentNetOpen} onOpenChange={setCurrentNetOpen}>
+        <DialogContent className="max-w-md rounded-[28px] p-6" style={{ background: LH.background }} dir="rtl">
+          <DialogHeader>
+            <div className="flex items-center gap-2.5 justify-end">
+              <DialogTitle style={{ color: LH.onSurface }}>שכר נטו נוכחי</DialogTitle>
+              <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(15,118,110,0.08)" }}>
+                <span className="material-symbols-outlined text-[18px]" style={{ color: "#0F766E" }}>account_balance_wallet</span>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-3 mt-2">
+            <div className="rounded-[22px] p-5" style={{ background: "#0F766E" }}>
+              <span className="text-[11px] font-bold tracking-[0.1em] uppercase block mb-1" style={{ color: "rgba(255,255,255,0.65)" }}>נטו נכון להיום</span>
+              <span dir="ltr" className="block tabular-nums leading-none" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.02em", color: "#fff" }}>
+                {money(currentToDatePayroll.netPay)}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between rounded-[18px] px-5 py-4" style={{ background: LH.surfaceContainerLow }}>
+              <span className="text-[13px] font-bold" style={{ color: LH.onSurfaceVariant }}>ברוטו נכון להיום</span>
+              <span dir="ltr" className="tabular-nums" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.01em", color: LH.onSurface }}>
+                {money(currentToDatePayroll.regularPay + currentToDatePayroll.overtimePay + currentToDatePayroll.fixedComponentsTotal + currentToDatePayroll.foodAllowanceAddition)}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between rounded-[18px] px-5 py-4" style={{ background: "rgba(220,38,38,0.06)" }}>
+              <span className="text-[13px] font-bold" style={{ color: "#DC2626" }}>ניכויים עד כה</span>
+              <span dir="ltr" className="tabular-nums" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.01em", color: "#DC2626" }}>
+                −{money(currentToDatePayroll.statutory.totalStatutoryDeductions + currentToDatePayroll.deductionsTotal + currentToDatePayroll.foodExpenseDeduction)}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 px-1 mt-3">
+            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "#0F766E" }} />
+            <span className="text-[11px] font-medium" style={{ color: LH.onSurfaceVariant }}>
+              מבוסס על השעות שכבר עבדת, ותוספות/ניכויים קבועים יחסית לימי העבודה שכבר עברו החודש — לא תחזית לסוף החודש.
+            </span>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
