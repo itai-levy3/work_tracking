@@ -10,10 +10,12 @@ import {
   computeProjectedMonthlyPayroll,
   CORRECTABLE_PAYROLL_FIELDS,
   formatHM,
+  getArchivedPdfForMonth,
   getPayrollActual,
   getProfileFirstName,
   getSettings,
   PAYROLL_DEVIATION_REASONS,
+  PdfArchiveEntry,
   savePayrollActual,
   saveSettings,
   UserSettings,
@@ -43,6 +45,34 @@ export default function DesignPreviewReports() {
   // Bumped after every save so the payroll useMemo below (and this load effect) re-read the
   // just-written record — getPayrollActual itself isn't reactive state React can track.
   const [actualsVersion, setActualsVersion] = useState(0);
+
+  // Saved payslip PDFs — the last 3 archived months load instantly; browsing further back with
+  // the month arrows triggers an on-demand Supabase lookup for that specific month.
+  const [archivedPdf, setArchivedPdf] = useState<PdfArchiveEntry | null>(null);
+  const [archivedPdfLoading, setArchivedPdfLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setArchivedPdf(null);
+    setArchivedPdfLoading(true);
+    getArchivedPdfForMonth(currentMonth.getFullYear(), currentMonth.getMonth())
+      .then((entry) => {
+        if (!cancelled) setArchivedPdf(entry);
+      })
+      .finally(() => {
+        if (!cancelled) setArchivedPdfLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentMonth]);
+
+  const handleDownloadArchivedPdf = (entry: PdfArchiveEntry) => {
+    const a = document.createElement("a");
+    a.href = entry.dataUrl;
+    a.download = `payslip-${entry.year}-${String(entry.month + 1).padStart(2, "0")}.pdf`;
+    a.click();
+  };
 
   useEffect(() => {
     const existing = getPayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
@@ -664,6 +694,38 @@ export default function DesignPreviewReports() {
                 </div>
                 <span className="material-symbols-outlined text-[22px] shrink-0" style={{ color: LH.onSurfaceVariant }}>chevron_left</span>
               </button>
+
+              {/* Saved payslip PDF for the month currently being viewed — the last 3 months are
+                  archived automatically; older ones are fetched on demand from Supabase. */}
+              {!isCurrentMonth &&
+                (archivedPdfLoading ? (
+                  <div className="col-span-2 rounded-[24px] p-5 flex items-center gap-3" style={{ background: `${LH.surface}CC`, border: "1px solid rgba(255,255,255,0.5)" }}>
+                    <div className="w-5 h-5 rounded-full border-2 animate-spin" style={{ borderColor: `${LH.primary}33`, borderTopColor: LH.primary }} />
+                    <span className="text-[12.5px] font-medium" style={{ color: LH.onSurfaceVariant }}>בודק אם יש תלוש שמור לחודש זה...</span>
+                  </div>
+                ) : archivedPdf ? (
+                  <button
+                    onClick={() => handleDownloadArchivedPdf(archivedPdf)}
+                    className="col-span-2 rounded-[24px] p-5 flex items-center justify-between gap-3 text-right transition-transform active:scale-[0.98]"
+                    style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "rgba(15,118,110,0.08)" }}>
+                        <span className="material-symbols-outlined text-[22px]" style={{ color: "#0F766E" }}>folder_managed</span>
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[14px] font-bold block truncate" style={{ color: LH.onSurface }}>תלוש שכר שמור</span>
+                        <span className="text-[11px] font-medium" style={{ color: LH.onSurfaceVariant }}>{MONTH_HE[archivedPdf.month]} {archivedPdf.year} · לחיצה להורדה</span>
+                      </div>
+                    </div>
+                    <span className="material-symbols-outlined text-[22px] shrink-0" style={{ color: LH.onSurfaceVariant }}>download</span>
+                  </button>
+                ) : (
+                  <div className="col-span-2 rounded-[24px] p-5 flex items-center gap-3" style={{ background: `${LH.onSurfaceVariant}0A`, border: "1px solid rgba(35,50,100,0.06)" }}>
+                    <span className="material-symbols-outlined" style={{ color: LH.onSurfaceVariant }}>folder_off</span>
+                    <span className="text-[12.5px] font-medium" style={{ color: LH.onSurfaceVariant }}>אין תלוש שמור לחודש {MONTH_HE[currentMonth.getMonth()]} {currentMonth.getFullYear()}.</span>
+                  </div>
+                ))}
             </div>
           </div>
         </div>

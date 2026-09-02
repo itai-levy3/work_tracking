@@ -15,7 +15,6 @@ import {
   getProfileFirstName,
   getSettings,
   getWorkHoursForMonth,
-  getWorkHoursForYear,
   upsertWorkHour,
   UserSettings,
   WorkHour,
@@ -128,35 +127,19 @@ export default function DesignPreview() {
   );
   const percentage = monthlyGoal > 0 ? Math.min(100, (totalWorked / monthlyGoal) * 100) : 0;
 
-  // ---- Year-to-date work days (Jan 1 → today): worked days + paid vacation/sick/holiday days
-  // count as a work day; unpaid leave and "off" days don't. ----
-  const yearWorkDaysCount = useMemo(() => {
-    const year = new Date().getFullYear();
-    const entries = getWorkHoursForYear(year);
-    return entries.filter((w) => {
-      const isWorked = (w.status === "worked" || !w.status) && getCountedHours(w) > 0;
-      const isPaidLeaveDay = (w.status === "vacation" || w.status === "sick" || w.status === "holiday") && w.paid !== false;
-      return isWorked || isPaidLeaveDay;
-    }).length;
-    // `workHours` isn't read directly (getWorkHoursForYear reads storage itself) — it's here
-    // purely so this recomputes after any day is saved.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workHours]);
-  const yearScheduledWorkDaysSoFar = useMemo(() => {
-    if (!settings) return 0;
-    const now = new Date();
-    const yearStart = new Date(now.getFullYear(), 0, 1);
-    let count = 0;
-    for (let d = new Date(yearStart); d <= now; d.setDate(d.getDate() + 1)) {
-      const weekday = d.toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
-      if (settings.work_days[weekday]) count += 1;
-    }
-    return count;
-  }, [settings]);
 
-  // ---- Monthly pace: cumulative surplus/deficit vs. the target hours for every day already
-  // reached this month (minute-accurate — no rounding beyond formatHM's own minute precision). ----
-  const monthTargetToDate = useMemo(() => {
+  // ---- This-month work days: worked days + paid vacation/sick/holiday days count, unpaid
+  // leave/off days don't. Mirrors yearWorkDaysCount but scoped to the currently-viewed month. ----
+  const monthWorkDaysCount = useMemo(
+    () =>
+      workHours.filter((w) => {
+        const isWorked = (w.status === "worked" || !w.status) && getCountedHours(w) > 0;
+        const isPaidLeaveDay = (w.status === "vacation" || w.status === "sick" || w.status === "holiday") && w.paid !== false;
+        return isWorked || isPaidLeaveDay;
+      }).length,
+    [workHours],
+  );
+  const monthScheduledWorkDaysSoFar = useMemo(() => {
     if (!settings) return 0;
     const y = currentMonth.getFullYear();
     const m = currentMonth.getMonth();
@@ -164,21 +147,53 @@ export default function DesignPreview() {
     const realToday = new Date();
     const isCurrentRealMonth = realToday.getFullYear() === y && realToday.getMonth() === m;
     const lastDay = isCurrentRealMonth ? realToday.getDate() : new Date(y, m, 1) < realToday ? daysInMonth : 0;
-    let total = 0;
+    let count = 0;
+    for (let d = 1; d <= lastDay; d++) {
+      const weekday = new Date(y, m, d).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
+      if (settings.work_days[weekday]) count += 1;
+    }
+    return count;
+  }, [settings, currentMonth]);
+
+  // ---- Monthly pace: hours deficit/overtime tracked per WORKED day only, summed (never netted
+  // against each other). Vacation/sick/holiday/off days already move salary through payroll — they
+  // are not "missing hours" and must not touch this tracker at all. A day that's still open (clocked
+  // in, not yet clocked out) hasn't been judged short yet either — it waits for clock-out (or an
+  // explicit day-off entry) before counting against the deficit, so mid-shift never inflates it. ----
+  const dailyPace = useMemo(() => {
+    if (!settings) return { workedSum: 0, targetSum: 0, deficitHours: 0, overtimeHours: 0 };
+    const y = currentMonth.getFullYear();
+    const m = currentMonth.getMonth();
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    const realToday = new Date();
+    const isCurrentRealMonth = realToday.getFullYear() === y && realToday.getMonth() === m;
+    const lastDay = isCurrentRealMonth ? realToday.getDate() : new Date(y, m, 1) < realToday ? daysInMonth : 0;
+    let workedSum = 0;
+    let targetSum = 0;
+    let deficitHours = 0;
+    let overtimeHours = 0;
     for (let d = 1; d <= lastDay; d++) {
       const ds = dateKey(new Date(y, m, d));
       // Days before employment even started were never "missing hours" — they simply weren't
       // work days yet, so they must never inflate the month's deficit target.
       if (settings.employment_start_date && ds < settings.employment_start_date) continue;
       const entryForDay = workHours.find((w) => w.date === ds);
-      total += getEffectiveDailyTarget(ds, entryForDay, settings);
+      if (entryForDay?.status && entryForDay.status !== "worked") continue;
+      const isToday = isCurrentRealMonth && d === realToday.getDate();
+      if (isToday && isClockedIn) continue;
+      const target = getEffectiveDailyTarget(ds, entryForDay, settings);
+      const worked = entryForDay ? getCountedHours(entryForDay) : 0;
+      targetSum += target;
+      workedSum += worked;
+      const diff = worked - target;
+      if (diff > 0) overtimeHours += diff;
+      else if (diff < 0) deficitHours += -diff;
     }
-    return total;
-  }, [settings, currentMonth, workHours]);
-  const monthDiff = totalWorked - monthTargetToDate;
-  const monthOvertime = monthDiff > 0 ? monthDiff : 0;
-  const monthRemaining = monthDiff < 0 ? -monthDiff : 0;
-  const monthPacePercent = monthTargetToDate > 0 ? Math.min(100, (totalWorked / monthTargetToDate) * 100) : totalWorked > 0 ? 100 : 0;
+    return { workedSum, targetSum, deficitHours, overtimeHours };
+  }, [settings, currentMonth, workHours, isClockedIn]);
+  const monthOvertime = dailyPace.overtimeHours;
+  const monthRemaining = dailyPace.deficitHours;
+  const monthPacePercent = dailyPace.targetSum > 0 ? Math.min(100, (dailyPace.workedSum / dailyPace.targetSum) * 100) : dailyPace.workedSum > 0 ? 100 : 0;
 
   // Visible proof that deferred-overtime hours are actually being tracked while they accrue,
   // for anyone with settings.overtime_payout_month === "next" — the payroll-accurate figure
@@ -640,8 +655,8 @@ export default function DesignPreview() {
 
               {[
                 { icon: "speed", label: "קצב השלמה", sub: "מהיעד החודשי", value: `${Math.round(percentage)}%`, grad: ["#7639FF", "#00D2FF"], glow: "rgba(118,57,255,0.55)", trackTint: "rgba(118,57,255,0.12)", percent: percentage, size: 124, lift: 0, zIndex: 10, overlap: 0, badge: 23 },
-                { icon: "hourglass_bottom", label: monthOvertime > 0 ? "בעודף החודש" : "בחוסר החודש", sub: "לעומת הקצב הצפוי", value: monthOvertime > 0 ? `+${formatHM(monthOvertime)}` : formatHM(monthRemaining), grad: ["#0F766E", "#19CEA0"], glow: "rgba(15,118,110,0.55)", trackTint: "rgba(15,118,110,0.14)", percent: monthPacePercent, size: 80, lift: 12, zIndex: 20, overlap: -19, badge: 18 },
-                { icon: "event_available", label: "ימי עבודה", sub: "השנה", value: String(yearWorkDaysCount), grad: ["#00D2FF", "#7FEFFF"], glow: "rgba(0,210,255,0.55)", trackTint: "rgba(0,210,255,0.12)", percent: yearScheduledWorkDaysSoFar > 0 ? Math.min(100, (yearWorkDaysCount / yearScheduledWorkDaysSoFar) * 100) : 0, size: 66, lift: 21, zIndex: 30, overlap: -15, badge: 16 },
+                { icon: "hourglass_bottom", label: monthRemaining > 0 ? "בחוסר החודש" : monthOvertime > 0 ? "בעודף החודש" : "בחוסר החודש", sub: "לעומת הקצב הצפוי", value: monthRemaining > 0 ? formatHM(monthRemaining) : monthOvertime > 0 ? `+${formatHM(monthOvertime)}` : formatHM(0), grad: ["#0F766E", "#19CEA0"], glow: "rgba(15,118,110,0.55)", trackTint: "rgba(15,118,110,0.14)", percent: monthPacePercent, size: 80, lift: 12, zIndex: 20, overlap: -19, badge: 18 },
+                { icon: "event_available", label: "ימי עבודה", sub: "החודש", value: String(monthWorkDaysCount), grad: ["#00D2FF", "#7FEFFF"], glow: "rgba(0,210,255,0.55)", trackTint: "rgba(0,210,255,0.12)", percent: monthScheduledWorkDaysSoFar > 0 ? Math.min(100, (monthWorkDaysCount / monthScheduledWorkDaysSoFar) * 100) : 0, size: 66, lift: 21, zIndex: 30, overlap: -15, badge: 16 },
                 { icon: "flag", label: "יעד חודשי", sub: `${formatHM(monthlyGoal)} שעות`, value: String(Math.round(monthlyGoal)), grad: ["#7639FF", "#B39CFF"], glow: "rgba(118,57,255,0.55)", trackTint: "rgba(118,57,255,0.12)", percent: 100, size: 56, lift: 29, zIndex: 40, overlap: -14, badge: 14 },
               ].map((k, i) => {
                 const r = 43;

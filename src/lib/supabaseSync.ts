@@ -234,6 +234,20 @@ export const pushPdfArchiveEntry = async (entry: PdfArchiveEntry): Promise<void>
   if (error) logSyncError("pushPdfArchiveEntry", error);
 };
 
+/** On-demand lookup for a single month's archived payslip — used when the user browses back past
+ * the 3 months kept locally. Supabase itself never trims old rows, so this can reach back years. */
+export const fetchPdfArchiveEntry = async (year: number, month: number): Promise<PdfArchiveEntry | null> => {
+  const userId = await getUserId();
+  if (!userId) return null;
+  const { data, error } = await supabase.from("pdf_archive").select("*").eq("user_id", userId).eq("year", year).eq("month", month).maybeSingle();
+  if (error) {
+    logSyncError("fetchPdfArchiveEntry", error);
+    return null;
+  }
+  if (!data) return null;
+  return { year: data.year, month: data.month, generatedAt: data.generated_at, dataUrl: data.data_url };
+};
+
 // ---- payroll actuals (estimated-vs-actual net pay reconciliation) ----
 
 export const pushPayrollActual = async (entry: PayrollActual): Promise<void> => {

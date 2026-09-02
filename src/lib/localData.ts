@@ -1,6 +1,7 @@
 import { getCurrentUserEmail } from "@/lib/localAuth";
 import { calculateStatutoryPayroll, StatutoryPayrollResult } from "@/lib/payrollTax";
 import {
+  fetchPdfArchiveEntry,
   PulledData,
   pushDeleteFoodEntry,
   pushDeleteWorkHour,
@@ -1166,6 +1167,15 @@ export const archiveMonthlyPdf = (year: number, month: number, dataUrl: string) 
   data.pdfArchive = next;
   writeData(data);
   void pushPdfArchiveEntry(entry);
+};
+
+/** Looks up one month's archived payslip — the local 3-month cache first (instant), falling back
+ * to Supabase (which never trims old rows) for anything older, so browsing back with the month
+ * arrows can reach payslips from years ago even though only the last 3 are ever cached locally. */
+export const getArchivedPdfForMonth = async (year: number, month: number): Promise<PdfArchiveEntry | null> => {
+  const local = getPdfArchive().find((e) => e.year === year && e.month === month);
+  if (local) return local;
+  return fetchPdfArchiveEntry(year, month);
 };
 
 // ---- Actual-vs-estimated net pay reconciliation (local only, not yet synced to Supabase) ----

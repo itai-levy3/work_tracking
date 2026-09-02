@@ -8,13 +8,11 @@ import {
   enableFoodTracking,
   exportLocalBackup,
   formatHM,
-  getPdfArchive,
   getProfileFirstName,
   getSettings,
   importLocalBackup,
   isFoodRelatedLabel,
   LocalBackupFile,
-  PdfArchiveEntry,
   OvertimeTier,
   PayLineItem,
   replaceCurrentUserData,
@@ -41,8 +39,6 @@ const CREDIT_POINT_CATEGORIES: { id: string; label: string; points: number; desc
   { id: "disabled_dependent", label: "בן/בת זוג או ילד עם מוגבלות", points: 2.0, description: "בכפוף לאישורים רפואיים/סטטוטוריים מתאימים." },
   { id: "academic_degree", label: "תואר אקדמי ראשון", points: 1.0, description: "לתקופה מוגבלת (בד״כ עד 3 שנים) מתום הלימודים." },
 ];
-
-const MONTH_HE = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
 
 const days = [
   { key: "sunday", label: "יום ראשון", short: "א'" },
@@ -201,7 +197,6 @@ export default function DesignPreviewSettings() {
   const [exportYear, setExportYear] = useState(new Date().getFullYear());
   const [busy, setBusy] = useState(false);
   const restoreInputRef = useRef<HTMLInputElement>(null);
-  const [pdfArchive, setPdfArchive] = useState<PdfArchiveEntry[]>([]);
 
   const [recoveryConfigured, setRecoveryConfigured] = useState(false);
   const [recoveryChallengeOpen, setRecoveryChallengeOpen] = useState(false);
@@ -226,7 +221,6 @@ export default function DesignPreviewSettings() {
       const s = getSettings();
       setSettings(s);
       setFirstName(getProfileFirstName());
-      setPdfArchive(getPdfArchive());
       setLoading(false);
     });
   }, [navigate]);
@@ -551,12 +545,6 @@ export default function DesignPreviewSettings() {
     }
   };
 
-  const handleDownloadArchivedPdf = (entry: PdfArchiveEntry) => {
-    const a = document.createElement("a");
-    a.href = entry.dataUrl;
-    a.download = `payslip-${entry.year}-${String(entry.month + 1).padStart(2, "0")}.pdf`;
-    a.click();
-  };
 
   const handleExportBackup = async () => {
     setBusy(true);
@@ -901,21 +889,6 @@ export default function DesignPreviewSettings() {
               }}
             />
           </div>
-
-          {/* Month-end payslip archive — the last 3 completed months, auto-saved with the actual
-              gross salary on record (the live "מסע התשלום" view deliberately doesn't lead with it). */}
-          {pdfArchive.length > 0 && (
-            <Section icon="folder_managed" title="תלושים שמורים (3 חודשים אחרונים)">
-              {pdfArchive.map((entry) => (
-                <Row
-                  key={`${entry.year}-${entry.month}`}
-                  title={`${MONTH_HE[entry.month]} ${entry.year}`}
-                  value="תלוש חודשי מלא, כולל שכר ברוטו — נשמר אוטומטית בסוף החודש"
-                  onClick={() => handleDownloadArchivedPdf(entry)}
-                />
-              ))}
-            </Section>
-          )}
 
           {/* Collapsible advanced import/export — closed by default */}
           <div className="w-full flex flex-col gap-4 mb-10">

@@ -208,8 +208,16 @@ const buildPayslipHtml = (year: number, month: number, settings: UserSettings, f
   `;
 };
 
-/** Mounts HTML off-screen, rasterizes it with html2canvas, then removes it. */
-const renderHtmlToCanvas = async (html: string): Promise<HTMLCanvasElement> => {
+interface RowBoundary {
+  top: number;
+  bottom: number;
+}
+
+/** Mounts HTML off-screen, rasterizes it with html2canvas, then removes it. Also measures every
+ * <tr>'s vertical span (in canvas pixels) while the live DOM still exists — html2canvas's output
+ * is a flat raster with no row information left, so this is the only point where a page break can
+ * be told not to land inside a row. */
+const renderHtmlToCanvas = async (html: string): Promise<{ canvas: HTMLCanvasElement; rowBoundaries: RowBoundary[] }> => {
   const container = document.createElement("div");
   container.style.position = "fixed";
   container.style.top = "0";
@@ -218,15 +226,24 @@ const renderHtmlToCanvas = async (html: string): Promise<HTMLCanvasElement> => {
   container.innerHTML = html;
   document.body.appendChild(container);
   try {
-    const canvas = await html2canvas(container, { scale: 2, backgroundColor: "#FFFFFF", useCORS: true });
-    return canvas;
+    const scale = 2;
+    const containerTop = container.getBoundingClientRect().top;
+    const rowBoundaries: RowBoundary[] = Array.from(container.querySelectorAll("tr")).map((row) => {
+      const r = row.getBoundingClientRect();
+      return { top: (r.top - containerTop) * scale, bottom: (r.bottom - containerTop) * scale };
+    });
+    const canvas = await html2canvas(container, { scale, backgroundColor: "#FFFFFF", useCORS: true });
+    return { canvas, rowBoundaries };
   } finally {
     document.body.removeChild(container);
   }
 };
 
-/** Adds a canvas to a jsPDF document, slicing it across as many A4 pages as needed. */
-const addCanvasAsPages = (pdf: jsPDF, canvas: HTMLCanvasElement, startNewPageIfNotFirst: boolean) => {
+/** Adds a canvas to a jsPDF document, slicing it across as many A4 pages as needed. A naive cut
+ * at a fixed pixel height can land in the middle of a table row (the raster has no idea rows
+ * exist); when that would happen, the cut is pulled back to that row's top edge instead, so the
+ * row starts fresh on the next page rather than being sliced in half. */
+const addCanvasAsPages = (pdf: jsPDF, canvas: HTMLCanvasElement, startNewPageIfNotFirst: boolean, rowBoundaries: RowBoundary[] = []) => {
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
   const imgWidthMm = pageWidth;
@@ -236,7 +253,15 @@ const addCanvasAsPages = (pdf: jsPDF, canvas: HTMLCanvasElement, startNewPageIfN
   let renderedPx = 0;
   let firstSlice = true;
   while (renderedPx < canvas.height) {
-    const sliceHeightPx = Math.min(pageHeightPx, canvas.height - renderedPx);
+    let sliceHeightPx = Math.min(pageHeightPx, canvas.height - renderedPx);
+    let cutAt = renderedPx + sliceHeightPx;
+    if (cutAt < canvas.height) {
+      const splitRow = rowBoundaries.find((r) => cutAt > r.top + 1 && cutAt < r.bottom - 1);
+      if (splitRow && splitRow.top > renderedPx) {
+        cutAt = splitRow.top;
+        sliceHeightPx = cutAt - renderedPx;
+      }
+    }
     const sliceCanvas = document.createElement("canvas");
     sliceCanvas.width = canvas.width;
     sliceCanvas.height = sliceHeightPx;
@@ -254,9 +279,9 @@ const addCanvasAsPages = (pdf: jsPDF, canvas: HTMLCanvasElement, startNewPageIfN
 
 export const exportMonthlyPayslipPdf = async (year: number, month: number, settings: UserSettings, firstName = "") => {
   const html = buildPayslipHtml(year, month, settings, firstName);
-  const canvas = await renderHtmlToCanvas(html);
+  const { canvas, rowBoundaries } = await renderHtmlToCanvas(html);
   const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
-  addCanvasAsPages(pdf, canvas, false);
+  addCanvasAsPages(pdf, canvas, false, rowBoundaries);
   pdf.save(`payslip-${year}-${String(month + 1).padStart(2, "0")}.pdf`);
 };
 
@@ -265,9 +290,9 @@ export const exportMonthlyPayslipPdf = async (year: number, month: number, setti
  * though the live in-app forecast deliberately doesn't lead with it). */
 export const generateMonthlyPayslipDataUrl = async (year: number, month: number, settings: UserSettings, firstName = ""): Promise<string> => {
   const html = buildPayslipHtml(year, month, settings, firstName);
-  const canvas = await renderHtmlToCanvas(html);
+  const { canvas, rowBoundaries } = await renderHtmlToCanvas(html);
   const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
-  addCanvasAsPages(pdf, canvas, false);
+  addCanvasAsPages(pdf, canvas, false, rowBoundaries);
   return pdf.output("datauristring");
 };
 
@@ -283,8 +308,8 @@ export const exportAnnualPayslipPdf = async (year: number, settings: UserSetting
   const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
   for (let i = 0; i < monthsWithData.length; i++) {
     const html = buildPayslipHtml(year, monthsWithData[i], settings, firstName);
-    const canvas = await renderHtmlToCanvas(html);
-    addCanvasAsPages(pdf, canvas, i > 0);
+    const { canvas, rowBoundaries } = await renderHtmlToCanvas(html);
+    addCanvasAsPages(pdf, canvas, i > 0, rowBoundaries);
   }
   pdf.save(`payslip-annual-${year}.pdf`);
   return true;
