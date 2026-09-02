@@ -7,6 +7,7 @@ import {
   computeMonthlyPayroll,
   formatHM,
   getCountedHours,
+  getPayrollActual,
   getWorkHoursForMonth,
   UserSettings,
 } from "@/lib/localData";
@@ -40,6 +41,11 @@ const buildPayslipHtml = (year: number, month: number, settings: UserSettings, f
   const workHoursData = getWorkHoursForMonth(year, month) || [];
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const monthName = `${MONTH_HE[month]} ${year}`;
+  // Once the user has confirmed the real net they received for this month, the document is a
+  // verified report rather than an estimate — the confirmed net figure replaces the computed one.
+  const actual = getPayrollActual(year, month);
+  const netPayForDisplay = actual ? actual.actualNet : payroll.netPay;
+  const isVerified = !!actual;
   const effectiveHourlyRate = computeEffectiveHourlyRateForMonth(year, month, settings);
 
   const dayRows = Array.from({ length: daysInMonth }, (_, i) => i + 1)
@@ -118,7 +124,7 @@ const buildPayslipHtml = (year: number, month: number, settings: UserSettings, f
       <!-- Header -->
       <div style="display:flex; justify-content:space-between; align-items:flex-end; padding-bottom:18px; border-bottom:1px solid ${ACCENT}; margin-bottom:20px;">
         <div>
-          <div style="font-family:${SERIF}; font-size:26px; font-weight:700; color:${INK};">תלוש שכר משוער</div>
+          <div style="font-family:${SERIF}; font-size:26px; font-weight:700; color:${INK};">${isVerified ? "תלוש שכר" : "תלוש שכר משוער"}</div>
           <div style="font-size:12.5px; color:${MUTED}; margin-top:4px; font-family:${SANS};">${monthName}</div>
         </div>
         <div style="text-align:left; font-size:10.5px; color:${MUTED}; font-family:${SANS};" dir="ltr">
@@ -198,11 +204,11 @@ const buildPayslipHtml = (year: number, month: number, settings: UserSettings, f
       <div style="display:flex; gap:14px;">
         ${summaryCell("ברוטו", money(grossTotal))}
         ${summaryCell("ניכויים", `−${money(deductionsTotalAll)}`)}
-        ${summaryCell("נטו לתשלום", money(payroll.netPay), { fill: true })}
+        ${summaryCell(isVerified ? "נטו לתשלום (בפועל)" : "נטו לתשלום", money(netPayForDisplay), { fill: true })}
       </div>
 
       <div style="margin-top:22px; font-size:10px; color:${MUTED}; text-align:center;">
-        זהו אומדן שהופק על ידי WorkTrack ואינו תלוש שכר רשמי.
+        ${isVerified ? "הנטו בתלוש זה אושר ידנית על ידי המשתמש כתואם למה שהתקבל בפועל. שאר הפירוט הוא אומדן WorkTrack ואינו תלוש שכר רשמי." : "זהו אומדן שהופק על ידי WorkTrack ואינו תלוש שכר רשמי."}
       </div>
     </div>
   `;

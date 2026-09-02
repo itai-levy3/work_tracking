@@ -686,19 +686,21 @@ export default function DesignPreviewReports() {
               )}
 
               {/* Month-end salary forecast — a plain button, not an always-open card; the full
-                  gross/net breakdown lives in the dialog it opens. */}
+                  gross/net breakdown lives in the dialog it opens. Once the user has confirmed the
+                  real net they received for this month, this stops being an "estimate" and becomes
+                  a verified report — the actual figure replaces the projected one as the headline. */}
               <button
                 onClick={() => setSalaryForecastOpen(true)}
                 className="col-span-2 rounded-[24px] p-5 flex items-center justify-between gap-3 text-right transition-transform active:scale-[0.98]"
                 style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: `${LH.primary}0F` }}>
-                    <span className="material-symbols-outlined text-[22px]" style={{ color: LH.primary }}>payments</span>
+                  <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: actualSaved ? "rgba(15,118,110,0.08)" : `${LH.primary}0F` }}>
+                    <span className="material-symbols-outlined text-[22px]" style={{ color: actualSaved ? "#0F766E" : LH.primary }}>{actualSaved ? "verified" : "payments"}</span>
                   </div>
                   <div className="min-w-0">
-                    <span className="text-[14px] font-bold block truncate" style={{ color: LH.onSurface }}>משכורת צפויה בסוף החודש</span>
-                    <span className="text-[11px] font-medium" style={{ color: LH.onSurfaceVariant }}>ברוטו ונטו · לחיצה לפרטים</span>
+                    <span className="text-[14px] font-bold block truncate" style={{ color: LH.onSurface }}>{actualSaved ? "דוח משכורת" : "משכורת צפויה בסוף החודש"}</span>
+                    <span className="text-[11px] font-medium" style={{ color: LH.onSurfaceVariant }}>{actualSaved ? "מבוסס על השכר שאישרת שקיבלת · לחיצה לפרטים" : "ברוטו ונטו · לחיצה לפרטים"}</span>
                   </div>
                 </div>
                 <span className="material-symbols-outlined text-[22px] shrink-0" style={{ color: LH.onSurfaceVariant }}>chevron_left</span>
@@ -767,19 +769,21 @@ export default function DesignPreviewReports() {
         <DialogContent className="max-w-md rounded-[28px] p-6" style={{ background: LH.background }} dir="rtl">
           <DialogHeader>
             <div className="flex items-center gap-2.5 justify-end">
-              <DialogTitle style={{ color: LH.onSurface }}>משכורת צפויה בסוף החודש</DialogTitle>
-              <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: `${LH.primary}0F` }}>
-                <span className="material-symbols-outlined text-[18px]" style={{ color: LH.primary }}>payments</span>
+              <DialogTitle style={{ color: LH.onSurface }}>{actualSaved ? "דוח משכורת" : "משכורת צפויה בסוף החודש"}</DialogTitle>
+              <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: actualSaved ? "rgba(15,118,110,0.08)" : `${LH.primary}0F` }}>
+                <span className="material-symbols-outlined text-[18px]" style={{ color: actualSaved ? "#0F766E" : LH.primary }}>{actualSaved ? "verified" : "payments"}</span>
               </div>
             </div>
           </DialogHeader>
 
           <div className="flex flex-col gap-3 mt-2">
-            {/* Net — the headline figure */}
-            <div className="rounded-[22px] p-5" style={{ background: LH.primary }}>
-              <span className="text-[11px] font-bold tracking-[0.1em] uppercase block mb-1" style={{ color: "rgba(255,255,255,0.65)" }}>נטו</span>
+            {/* Net — the headline figure. Once the user has confirmed the real net pay they
+                received, that verified figure replaces the projection here — this is no longer an
+                estimate for this month. */}
+            <div className="rounded-[22px] p-5" style={{ background: actualSaved ? "#0F766E" : LH.primary }}>
+              <span className="text-[11px] font-bold tracking-[0.1em] uppercase block mb-1" style={{ color: "rgba(255,255,255,0.65)" }}>{actualSaved ? "נטו (בפועל)" : "נטו"}</span>
               <span dir="ltr" className="block tabular-nums leading-none" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.02em", color: "#fff" }}>
-                {money(projectedPayroll.netPay)}
+                {money(actualSaved && hasActualNet ? actualNetValue : projectedPayroll.netPay)}
               </span>
             </div>
 
