@@ -61,6 +61,14 @@ export interface WorkHour {
    * fractional day from that leave type's yearly balance.
    */
   deficitCoveredBy?: "vacation" | "sick";
+  /**
+   * Only meaningful when status === "holiday" and fraction !== "full": the holiday's own fraction
+   * is always paid in full and never touches any balance, but the REST of the day is automatically
+   * a vacation-day request. true (default when unset) = that remainder is paid vacation (deducted
+   * from the vacation balance, possibly negative). false = the remainder is unpaid and excluded
+   * from salary, same as any other unpaid leave.
+   */
+  remainderPaid?: boolean;
   /** Marks this specific "worked" day as an evening shift — its target comes from evening_shift_hours. */
   evening?: boolean;
   /** A free-text note/event left on this day (e.g. "יציאה מוקדמת ב-15:30"), settable in advance via Schedule. */
@@ -170,6 +178,13 @@ export interface UserSettings {
    * = no minimum). Prorated for a mid-year employment start, same as a lump-sum accrual.
    */
   min_vacation_days_required?: number;
+  /**
+   * How many days a vacation/sick balance may go negative before the app blocks further paid
+   * requests and forces "unpaid" instead. undefined = not configured yet (the quick-mark flow asks
+   * for this the first time a request would exceed a 0/positive balance).
+   */
+  vacation_negative_limit?: number;
+  sick_negative_limit?: number;
 
   // ---- Statutory payroll (Israeli income tax / National Insurance / Health Insurance / pension / Keren Hishtalmut) ----
   /** "manual" (default) keeps today's behavior — the 3 mandatory deductions below are exactly what's entered.
@@ -686,6 +701,8 @@ export const computeLeaveUsage = (year: number, type: "vacation" | "sick", setti
     if (entryDate.getFullYear() * 12 + entryDate.getMonth() > asOfYearMonth) continue;
     if (w.status === type) {
       used += fractionMultiplier(w.fraction);
+    } else if (type === "vacation" && w.status === "holiday" && w.remainderPaid !== false) {
+      used += 1 - fractionMultiplier(w.fraction);
     } else if ((w.status === "worked" || !w.status) && w.deficitCoveredBy === type) {
       const target = getEffectiveDailyTarget(w.date, w, settings);
       if (target > 0) {
@@ -769,6 +786,39 @@ export const computeCumulativeAccrued = (
     total += computeAccruedDays(annualDays, "lump_sum", employmentStartDate, y, capped);
   }
   return +total.toFixed(3);
+};
+
+/**
+ * A one-line congratulatory message when today is exactly a work-anniversary milestone (1/3/6
+ * months, then every full year), or null on any other day. Uses calendar-accurate month/year
+ * arithmetic (not a fixed day count) so a start date late in a month still lands on the right day.
+ */
+export const getMilestoneMessageForToday = (settings: UserSettings, today: Date = new Date()): string | null => {
+  if (!settings.employment_start_date) return null;
+  const start = new Date(`${settings.employment_start_date}T00:00:00`);
+  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+  const monthMessages: Record<number, string> = {
+    1: "איזה כיף — עברת חודש שלם בעבודה הזו! תמשיך ככה 💪",
+    3: "3 חודשים כבר מאחוריך. את/ה ממש מתבסס/ת כאן! 🎉",
+    6: "חצי שנה של עבודה — ההתמדה שלך מרשימה. יאללה קדימה! ✨",
+  };
+  for (const months of Object.keys(monthMessages).map(Number)) {
+    const anniv = new Date(start.getFullYear(), start.getMonth() + months, start.getDate());
+    if (sameDay(anniv, t)) return monthMessages[months];
+  }
+
+  const years = t.getFullYear() - start.getFullYear();
+  if (years >= 1) {
+    const anniv = new Date(start.getFullYear() + years, start.getMonth(), start.getDate());
+    if (sameDay(anniv, t)) {
+      return years === 1
+        ? "שנה שלמה! כל הכבוד על ההתמדה — הישג יפה 🏆"
+        : `${years} שנים באותו מקום! אתה ממשיך להתמיד ולהצליח 🌟`;
+    }
+  }
+  return null;
 };
 
 /** Total vacation/sick days used since employment started, summed across every calendar year (no annual reset). */
@@ -931,6 +981,13 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
         regularPay += hours * baseRate;
         if (w.status === "holiday") {
           holidayDays += fractionMultiplier(w.fraction);
+          // A partial-day holiday's remainder is automatically a vacation-day request for the
+          // rest of the day — paid (its hours are already folded into hours_worked/regularPay
+          // above) and deducted from the vacation balance via computeLeaveUsage, or declined and
+          // unpaid/excluded from salary here, same as any other unpaid leave day.
+          if (w.remainderPaid === false) {
+            unpaidLeaveDays += 1 - fractionMultiplier(w.fraction);
+          }
         }
       }
       continue;

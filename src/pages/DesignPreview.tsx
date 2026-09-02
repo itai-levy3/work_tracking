@@ -12,6 +12,7 @@ import {
   formatHM,
   getCountedHours,
   getEffectiveDailyTarget,
+  getMilestoneMessageForToday,
   getProfileFirstName,
   getSettings,
   getWorkHoursForMonth,
@@ -24,6 +25,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { LHBottomNav } from "./design-preview/Shared";
 import { DayDetailModal } from "./design-preview/DayDetailModal";
 import { ClockInEditModal } from "./design-preview/ClockInEditModal";
+import { QuickDayMarkModal } from "./design-preview/QuickDayMarkModal";
 import { STATUS_META } from "./design-preview/tokens";
 
 /** Every KPI ring expands to exactly this outer diameter (bezel included) when hovered/tapped. */
@@ -52,6 +54,7 @@ export default function DesignPreview() {
   const [dayModalDate, setDayModalDate] = useState<Date | null>(null);
   const [dayModalEntry, setDayModalEntry] = useState<WorkHour | undefined>(undefined);
   const [clockInEditOpen, setClockInEditOpen] = useState(false);
+  const [quickMarkKind, setQuickMarkKind] = useState<"vacation" | "sick" | "holiday" | "off" | null>(null);
 
   const loadMonth = (month: Date, s?: UserSettings) => {
     const hrs = getWorkHoursForMonth(month.getFullYear(), month.getMonth());
@@ -76,6 +79,19 @@ export default function DesignPreview() {
       setFirstName(getProfileFirstName());
       loadMonth(currentMonth, s);
       setLoading(false);
+
+      // Work-anniversary milestone toast — shown at most once per calendar day even if Home
+      // mounts more than once (e.g. navigating back and forth), via a plain localStorage flag.
+      const milestoneMsg = getMilestoneMessageForToday(s);
+      if (milestoneMsg) {
+        const todayFlagKey = "worktrack_milestone_shown_on";
+        const shownOn = localStorage.getItem(todayFlagKey);
+        const todayIso = dateKey(new Date());
+        if (shownOn !== todayIso) {
+          localStorage.setItem(todayFlagKey, todayIso);
+          toast.success(milestoneMsg, { duration: 6000 });
+        }
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -610,6 +626,28 @@ export default function DesignPreview() {
             </button>
           )}
 
+          {/* Quick same-day marking — vacation/sick/holiday/off, without opening the day editor */}
+          <div className="lh-rise flex items-center justify-center gap-4" style={{ animationDelay: "160ms" }}>
+            {(["vacation", "sick", "holiday", "off"] as const).map((k) => {
+              const meta = STATUS_META[k];
+              return (
+                <button
+                  key={k}
+                  onClick={() => setQuickMarkKind(k)}
+                  className="flex flex-col items-center gap-1.5 active:scale-95 transition-transform"
+                >
+                  <div
+                    className="w-12 h-12 rounded-full flex items-center justify-center"
+                    style={{ background: `linear-gradient(155deg, ${meta.grad[0]}, ${meta.grad[1]})`, boxShadow: `0 10px 22px -6px ${meta.glow}` }}
+                  >
+                    <span className="material-symbols-outlined text-white" style={{ fontSize: 20 }}>{meta.icon}</span>
+                  </div>
+                  <span className="text-[10.5px] font-bold" style={{ color: "#46464f" }}>{meta.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
           {/* Month selector + KPI instruments */}
           <div className="lh-rise flex flex-col gap-6" style={{ animationDelay: "200ms" }}>
             <div className="flex justify-center -mb-2 z-10 relative">
@@ -1087,6 +1125,17 @@ export default function DesignPreview() {
         entry={todayEntry}
         onClose={() => setClockInEditOpen(false)}
         onSaved={refresh}
+      />
+
+      <QuickDayMarkModal
+        open={quickMarkKind !== null}
+        kind={quickMarkKind}
+        date={new Date()}
+        existingEntry={todayEntry}
+        settings={settings}
+        onClose={() => setQuickMarkKind(null)}
+        onSaved={refresh}
+        onSettingsUpdated={setSettings}
       />
 
       {offDayPrompt && (
