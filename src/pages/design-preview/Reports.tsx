@@ -277,11 +277,15 @@ export default function DesignPreviewReports() {
             </button>
           </div>
 
-          {/* Hero: estimated net pay */}
+          {/* Hero: net pay to date. Uses the same properly-prorated calculation as "שכר נטו נוכחי"
+              below (for a past/completed month this is identical to the plain full-month payroll —
+              proration only kicks in for the current, still-in-progress month) — `payroll` itself
+              mixes actual to-date hours with FULL flat monthly additions/deductions, which looks
+              badly wrong early in the month, so it's deliberately not used here. */}
           <div className="lh-rise py-8 flex flex-col items-center justify-center relative z-10">
-            <span className="text-[12px] font-bold tracking-[0.15em] mb-4 uppercase" style={{ color: LH.primary }}>משכורת נטו משוערת</span>
+            <span className="text-[12px] font-bold tracking-[0.15em] mb-4 uppercase" style={{ color: LH.primary }}>{isCurrentMonth ? "נטו נכון להיום" : "משכורת נטו משוערת"}</span>
             <h1 className="leading-none tracking-tighter tabular-nums" style={{ fontSize: 60, fontWeight: 800, color: LH.onSurface }}>
-              {money(payroll.netPay)}
+              {money(currentToDatePayroll.netPay)}
             </h1>
             <div className="mt-6 flex items-center gap-2 px-4 py-1.5 rounded-full shadow-sm" style={{ background: LH.surfaceContainerHigh }}>
               <span className="material-symbols-outlined text-[16px]" style={{ color: LH.primary }}>schedule</span>
