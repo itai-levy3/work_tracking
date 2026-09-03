@@ -795,6 +795,20 @@ export default function DesignPreviewReports() {
               </span>
             </div>
 
+            {/* Overtime — broken out on its own with the month it's actually sourced from, since
+                a deferred-payout setting can mean this month's net includes LAST month's overtime
+                instead of this month's own. */}
+            {projectedPayroll.overtimePay > 0 && (
+              <div className="flex items-center justify-between rounded-[18px] px-5 py-4" style={{ background: "rgba(0,168,204,0.08)" }}>
+                <span className="text-[13px] font-bold" style={{ color: "#00A8CC" }}>
+                  שעות נוספות{settings.overtime_payout_month === "next" ? ` (מ${MONTH_HE[(currentMonth.getMonth() + 11) % 12]})` : ""}
+                </span>
+                <span dir="ltr" className="tabular-nums" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.01em", color: "#00A8CC" }}>
+                  +{money(projectedPayroll.overtimePay)}
+                </span>
+              </div>
+            )}
+
             {/* When gross is base-pay-only, show the additions and the grand total they reach so
                 the numbers still visibly add up. */}
             {!includeAdditionsInGross && additionsGrandTotal > 0 && (
@@ -855,18 +869,44 @@ export default function DesignPreviewReports() {
               </span>
             </div>
 
-            <div className="flex items-center justify-between rounded-[18px] px-5 py-4" style={{ background: LH.surfaceContainerLow }}>
-              <span className="text-[13px] font-bold" style={{ color: LH.onSurfaceVariant }}>ברוטו נכון להיום</span>
-              <span dir="ltr" className="tabular-nums" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.01em", color: LH.onSurface }}>
-                {money(currentToDatePayroll.regularPay + currentToDatePayroll.overtimePay + currentToDatePayroll.fixedComponentsTotal + currentToDatePayroll.foodAllowanceAddition)}
-              </span>
+            {/* Additions — itemized, so it's clear exactly what's built the net-to-date figure */}
+            <div className="flex flex-col gap-2">
+              <span className="text-[10.5px] font-bold uppercase tracking-[0.08em] px-1" style={{ color: "#0F766E" }}>תוספות</span>
+              {[
+                { label: "שעות רגילות", amount: currentToDatePayroll.regularPay },
+                ...(currentToDatePayroll.overtimePay > 0 ? [{ label: "שעות נוספות", amount: currentToDatePayroll.overtimePay }] : []),
+                ...(currentToDatePayroll.fixedComponentsTotal > 0 ? [{ label: "תוספות קבועות (יחסי לימים שעברו)", amount: currentToDatePayroll.fixedComponentsTotal }] : []),
+                ...(currentToDatePayroll.foodAllowanceAddition > 0 ? [{ label: "תקציב אוכל (יחסי לימים שעברו)", amount: currentToDatePayroll.foodAllowanceAddition }] : []),
+              ].map((item) => (
+                <div key={item.label} className="flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: "rgba(15,118,110,0.06)" }}>
+                  <span className="text-[12.5px] font-semibold" style={{ color: LH.onSurface }}>{item.label}</span>
+                  <span dir="ltr" className="tabular-nums text-[14px] font-bold" style={{ fontFamily: "'Space Grotesk', sans-serif", color: "#0F766E" }}>+{money(item.amount)}</span>
+                </div>
+              ))}
             </div>
 
-            <div className="flex items-center justify-between rounded-[18px] px-5 py-4" style={{ background: "rgba(220,38,38,0.06)" }}>
-              <span className="text-[13px] font-bold" style={{ color: "#DC2626" }}>ניכויים עד כה</span>
-              <span dir="ltr" className="tabular-nums" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.01em", color: "#DC2626" }}>
-                −{money(currentToDatePayroll.statutory.totalStatutoryDeductions + currentToDatePayroll.deductionsTotal + currentToDatePayroll.foodExpenseDeduction)}
-              </span>
+            {/* Deductions — itemized by statutory category + manual + food expenses */}
+            <div className="flex flex-col gap-2 mt-1">
+              <span className="text-[10.5px] font-bold uppercase tracking-[0.08em] px-1" style={{ color: "#DC2626" }}>ניכויים</span>
+              {[
+                { label: "מס הכנסה", amount: currentToDatePayroll.statutory.incomeTax },
+                { label: "ביטוח לאומי", amount: currentToDatePayroll.statutory.nationalInsurance },
+                { label: "ביטוח בריאות", amount: currentToDatePayroll.statutory.healthInsurance },
+                { label: "פנסיה", amount: currentToDatePayroll.statutory.pensionEmployee },
+                { label: "קרן השתלמות", amount: currentToDatePayroll.statutory.trainingFundEmployee },
+                { label: "ניכויים ידניים (יחסי לימים שעברו)", amount: currentToDatePayroll.deductionsTotal },
+                { label: "הוצאות אוכל שדווחו", amount: currentToDatePayroll.foodExpenseDeduction },
+              ]
+                .filter((item) => item.amount > 0)
+                .map((item) => (
+                  <div key={item.label} className="flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: "rgba(220,38,38,0.06)" }}>
+                    <span className="text-[12.5px] font-semibold" style={{ color: LH.onSurface }}>{item.label}</span>
+                    <span dir="ltr" className="tabular-nums text-[14px] font-bold" style={{ fontFamily: "'Space Grotesk', sans-serif", color: "#DC2626" }}>−{money(item.amount)}</span>
+                  </div>
+                ))}
+              {currentToDatePayroll.statutory.totalStatutoryDeductions + currentToDatePayroll.deductionsTotal + currentToDatePayroll.foodExpenseDeduction === 0 && (
+                <span className="text-[12px] px-1" style={{ color: LH.onSurfaceVariant }}>אין ניכויים עד כה.</span>
+              )}
             </div>
           </div>
 

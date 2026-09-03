@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import * as RxDialog from "@radix-ui/react-dialog";
 import {
+  calcHoursBetween,
   computeCumulativeAccrued,
   computeCumulativeLeaveUsage,
   DayFraction,
@@ -22,18 +23,26 @@ const modalStyle = `
 `;
 
 type QuickMarkKind = "vacation" | "sick" | "holiday" | "off";
-type Step = "fraction" | "balanceOverflow" | "setLimit" | "limitExceeded" | "saving";
+type Step = "mode" | "fraction" | "balanceOverflow" | "setLimit" | "limitExceeded" | "saving";
 
 interface QuickDayMarkModalProps {
   open: boolean;
   kind: QuickMarkKind | null;
   date: Date | null;
   existingEntry: WorkHour | undefined;
+  /** Whether today's shift is currently open — offers a "sign off from this moment" mode that
+   * closes the running clock right now and treats only the rest of the day as the chosen leave. */
+  isClockedIn: boolean;
   settings: UserSettings | null;
   onClose: () => void;
   onSaved: () => void;
   onSettingsUpdated: (s: UserSettings) => void;
 }
+
+const nowHM = () => {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
 
 const FRACTIONS: { key: DayFraction; label: string }[] = [
   { key: "full", label: "יום מלא" },
@@ -53,19 +62,22 @@ const KIND_TITLE: Record<QuickMarkKind, string> = { vacation: "יום חופש",
  * immediately, an empty balance offers "go negative" vs. "unpaid", and once a negative-limit is
  * configured, exceeding it always forces a choice between raising the limit or marking unpaid.
  */
-export function QuickDayMarkModal({ open, kind, date, existingEntry, settings, onClose, onSaved, onSettingsUpdated }: QuickDayMarkModalProps) {
+export function QuickDayMarkModal({ open, kind, date, existingEntry, isClockedIn, settings, onClose, onSaved, onSettingsUpdated }: QuickDayMarkModalProps) {
   const [step, setStep] = useState<Step>("fraction");
   const [fraction, setFraction] = useState<DayFraction>("full");
   const [limitDraft, setLimitDraft] = useState("3");
   const [balanceLeaveType, setBalanceLeaveType] = useState<"vacation" | "sick">("vacation");
   const [pendingSave, setPendingSave] = useState<{ requestedFraction: number; leaveType: "vacation" | "sick" } | null>(null);
+  const [signFromNow, setSignFromNow] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setStep("fraction");
+      setStep(isClockedIn && kind !== "off" ? "mode" : "fraction");
       setFraction("full");
       setPendingSave(null);
+      setSignFromNow(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, kind]);
 
   if (!date || !kind || !settings) return null;
@@ -80,15 +92,39 @@ export function QuickDayMarkModal({ open, kind, date, existingEntry, settings, o
     return accrued - used;
   };
 
+  /** Closes today's open shift right now: the last running segment's end becomes this moment, and
+   * whatever was genuinely worked (always paid, regardless of the leave portion's paid-ness) is
+   * preserved for the record instead of being discarded. */
+  const closeShiftNow = () => {
+    const now = nowHM();
+    const segs: NonNullable<WorkHour["segments"]> =
+      existingEntry?.segments && existingEntry.segments.length > 0
+        ? [...existingEntry.segments]
+        : existingEntry?.start_time
+          ? [{ start: existingEntry.start_time, end: existingEntry.end_time, evening: existingEntry.evening }]
+          : [];
+    if (segs.length > 0) segs[segs.length - 1] = { ...segs[segs.length - 1], end: now };
+    const actualWorkedHours = segs.reduce((s, seg) => s + calcHoursBetween(seg.start, seg.end), 0);
+    return { segments: segs, start_time: segs[0]?.start ?? now, end_time: now, actualWorkedHours };
+  };
+
   /**
    * `paid` describes the outcome of the balance-sensitive portion: for vacation/sick/off it's the
    * whole day; for holiday (which is always paid in full for its own fraction) it's specifically
    * whether the automatic remainder — the rest of the day when fraction !== "full" — is paid
-   * vacation or unpaid.
+   * vacation or unpaid. When signing off from right now, whatever was actually clocked is folded
+   * in on top and always paid, on the theory that real worked hours are never in question.
    */
   const finalizeSave = (paid: boolean) => {
     const ds = dateKey(date);
     const target = getEffectiveDailyTarget(ds, existingEntry, settings);
+    const closed = signFromNow ? closeShiftNow() : null;
+    const actualWorkedHours = closed?.actualWorkedHours ?? 0;
+    const timeFields = {
+      start_time: closed?.start_time ?? existingEntry?.start_time ?? null,
+      end_time: closed?.end_time ?? existingEntry?.end_time ?? null,
+      segments: closed?.segments ?? existingEntry?.segments,
+    };
     if (kind === "holiday") {
       const holidayPortion = fractionMultiplier(fraction);
       const paidPortion = fraction === "full" || paid ? 1 : holidayPortion;
@@ -99,9 +135,8 @@ export function QuickDayMarkModal({ open, kind, date, existingEntry, settings, o
         fraction,
         paid: true,
         remainderPaid: fraction === "full" ? undefined : paid,
-        hours_worked: target * paidPortion,
-        start_time: existingEntry?.start_time ?? null,
-        end_time: existingEntry?.end_time ?? null,
+        hours_worked: actualWorkedHours + target * paidPortion,
+        ...timeFields,
       });
     } else {
       upsertWorkHour({
@@ -110,9 +145,8 @@ export function QuickDayMarkModal({ open, kind, date, existingEntry, settings, o
         status: kind,
         fraction,
         paid,
-        hours_worked: paid ? target * fractionMultiplier(fraction) : 0,
-        start_time: existingEntry?.start_time ?? null,
-        end_time: existingEntry?.end_time ?? null,
+        hours_worked: actualWorkedHours + (paid ? target * fractionMultiplier(fraction) : 0),
+        ...timeFields,
       });
     }
     toast.success(`${KIND_TITLE[kind]} סומן להיום${paid === false ? " (לא משולם)" : ""}`);
@@ -212,9 +246,43 @@ export function QuickDayMarkModal({ open, kind, date, existingEntry, settings, o
               </div>
             </div>
 
+            {step === "mode" && (
+              <>
+                <div className="text-[13px] font-semibold leading-relaxed" style={{ color: "#46464f" }}>
+                  השעון שלך פועל היום. איך לחתום את {KIND_TITLE[kind]}?
+                </div>
+                <button
+                  onClick={() => {
+                    setSignFromNow(true);
+                    setStep("fraction");
+                  }}
+                  className="w-full h-auto py-3.5 px-4 rounded-2xl font-bold text-white text-right flex items-center justify-between gap-2"
+                  style={{ background: `linear-gradient(155deg, ${meta.grad[0]}, ${meta.grad[1]})`, boxShadow: `0 16px 32px -10px ${meta.glow}` }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 20 }}>schedule</span>
+                  <span className="flex-1">
+                    <span className="block text-[13.5px]">חתימה מהרגע הנוכחי</span>
+                    <span className="block text-[11px] font-medium opacity-80">סוגר את השעון עכשיו ({nowHM()}), שאר היום מסומן כ{KIND_TITLE[kind]}</span>
+                  </span>
+                </button>
+                <button
+                  onClick={() => {
+                    setSignFromNow(false);
+                    setStep("fraction");
+                  }}
+                  className="w-full h-11 rounded-2xl font-bold"
+                  style={{ background: meta.tint, color: meta.grad[0] }}
+                >
+                  חתימה רגילה (כל היום)
+                </button>
+              </>
+            )}
+
             {step === "fraction" && (
               <>
-                <div className="text-[13px] font-semibold" style={{ color: "#46464f" }}>כמה מהיום לחתום?</div>
+                <div className="text-[13px] font-semibold" style={{ color: "#46464f" }}>
+                  {signFromNow ? `כמה מהיום לחתום כ${KIND_TITLE[kind]}? (השאר כבר נספר כעבודה עד עכשיו)` : "כמה מהיום לחתום?"}
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   {FRACTIONS.map((f) => (
                     <button

@@ -212,6 +212,15 @@ export interface UserSettings {
   food_card_monthly_amount?: number;
   /** Per-day spending ceiling some employers impose. 0/undefined = no daily cap. */
   food_card_daily_cap?: number;
+  /** Saved meal places (e.g. "מסעדה ליד העבודה" · ₪32) — one tap logs an expense at that price
+   * instantly instead of typing the amount every time. Editable in place if the price changes. */
+  food_presets?: FoodPreset[];
+}
+
+export interface FoodPreset {
+  id: string;
+  name: string;
+  amount: number;
 }
 
 /** One food/meal expense logged against the monthly food-card budget. */
@@ -371,6 +380,7 @@ const defaultSettings: UserSettings = {
   food_card_has_card: true,
   food_card_monthly_amount: 0,
   food_card_daily_cap: 0,
+  food_presets: [],
 };
 
 const defaultData: LocalDataShape = {
@@ -467,6 +477,7 @@ const safeParseUserData = (raw: string | null): LocalDataShape => {
             : defaultSettings.food_card_monthly_amount,
         food_card_daily_cap:
           typeof parsed.settings?.food_card_daily_cap === "number" ? parsed.settings.food_card_daily_cap : defaultSettings.food_card_daily_cap,
+        food_presets: Array.isArray(parsed.settings?.food_presets) ? parsed.settings.food_presets : defaultSettings.food_presets,
       },
       workHours: Array.isArray(parsed.workHours) ? parsed.workHours : [],
       foodEntries: Array.isArray(parsed.foodEntries) ? parsed.foodEntries : [],
@@ -969,25 +980,29 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
   for (const w of entries) {
     const isOff = w.status === "sick" || w.status === "vacation" || w.status === "holiday" || w.status === "off";
     if (isOff) {
-      if (w.paid === false) {
+      // hours_worked always gets paid, whatever it represents: a fully paid leave day's target
+      // hours, just the genuinely-clocked "worked portion" of a day signed off into leave partway
+      // through (always paid, regardless of whether the leave portion itself is), or 0 for a plain
+      // unpaid leave/off day. The unpaid/holiday bookkeeping below is entirely separate from pay.
+      const hours = Number(w.hours_worked || 0);
+      if (hours > 0) {
+        regularHours += hours;
+        regularPay += hours * baseRate;
+      }
+      if (w.status === "holiday") {
+        holidayDays += fractionMultiplier(w.fraction);
+        // A partial-day holiday's remainder is automatically a vacation-day request for the
+        // rest of the day — paid (its hours are already folded into hours_worked/regularPay
+        // above) and deducted from the vacation balance via computeLeaveUsage, or declined and
+        // unpaid/excluded from salary here, same as any other unpaid leave day.
+        if (w.remainderPaid === false) {
+          unpaidLeaveDays += 1 - fractionMultiplier(w.fraction);
+        }
+      } else if (w.paid === false) {
         if (w.status === "off") {
           unpaidOffDays += fractionMultiplier(w.fraction);
         } else {
           unpaidLeaveDays += fractionMultiplier(w.fraction);
-        }
-      } else {
-        const hours = Number(w.hours_worked || 0);
-        regularHours += hours;
-        regularPay += hours * baseRate;
-        if (w.status === "holiday") {
-          holidayDays += fractionMultiplier(w.fraction);
-          // A partial-day holiday's remainder is automatically a vacation-day request for the
-          // rest of the day — paid (its hours are already folded into hours_worked/regularPay
-          // above) and deducted from the vacation balance via computeLeaveUsage, or declined and
-          // unpaid/excluded from salary here, same as any other unpaid leave day.
-          if (w.remainderPaid === false) {
-            unpaidLeaveDays += 1 - fractionMultiplier(w.fraction);
-          }
         }
       }
       continue;
@@ -1217,6 +1232,26 @@ export const computeProjectedMonthlyPayroll = (year: number, month: number, sett
   const loggedDates = new Set(actualEntries.map((e) => e.date));
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const projectedEntries: WorkHour[] = [...actualEntries];
+
+  // Today itself must never silently drop out of the forecast just because the shift isn't closed
+  // yet — a day with no entry (hasn't clocked in) or an open shift with nothing completed so far
+  // (clocked in, still working) is still assumed to become a normal paid day, exactly like every
+  // other future day, until the user actually reports otherwise (clocks out with different hours,
+  // or explicitly marks the day off/unpaid/leave). Only once that real outcome is known does the
+  // real entry take over below.
+  const todayDateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const todayEntry = actualEntries.find((e) => e.date === todayDateStr);
+  const todayStillOpenWithNoProgress =
+    !!todayEntry && (todayEntry.status === "worked" || !todayEntry.status) && !todayEntry.end_time && getCountedHours(todayEntry) === 0;
+  if (!todayEntry || todayStillOpenWithNoProgress) {
+    const target = getDailyTargetHoursForDate(todayDateStr, settings);
+    if (target > 0) {
+      const idx = projectedEntries.findIndex((e) => e.date === todayDateStr);
+      const projectedToday: WorkHour = { date: todayDateStr, hours_worked: target, start_time: null, end_time: null, status: "worked" };
+      if (idx >= 0) projectedEntries[idx] = projectedToday;
+      else projectedEntries.push(projectedToday);
+    }
+  }
 
   for (let d = today.getDate() + 1; d <= daysInMonth; d++) {
     const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;

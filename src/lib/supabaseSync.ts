@@ -74,6 +74,7 @@ const toDbSettings = (settings: UserSettings, firstName: string, userId: string)
   food_card_has_card: settings.food_card_has_card ?? true,
   food_card_monthly_amount: settings.food_card_monthly_amount ?? 0,
   food_card_daily_cap: settings.food_card_daily_cap ?? 0,
+  food_presets: settings.food_presets ?? [],
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -119,6 +120,7 @@ const fromDbSettings = (row: any): { settings: UserSettings; firstName: string }
     food_card_has_card: row.food_card_has_card,
     food_card_monthly_amount: Number(row.food_card_monthly_amount) || 0,
     food_card_daily_cap: Number(row.food_card_daily_cap) || 0,
+    food_presets: row.food_presets ?? [],
   },
 });
 

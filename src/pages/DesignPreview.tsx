@@ -626,9 +626,14 @@ export default function DesignPreview() {
             </button>
           )}
 
-          {/* Quick same-day marking — vacation/sick/holiday/off, without opening the day editor */}
+          {/* Quick same-day marking — vacation/sick/holiday/off, without opening the day editor.
+              "off" only makes sense before a shift starts — once clocked in, the day is already
+              being worked, so that option disappears (vacation/sick/holiday stay available to
+              sign off the rest of the day from this moment, via the modal's own flow). */}
           <div className="lh-rise flex items-center justify-center gap-4" style={{ animationDelay: "160ms" }}>
-            {(["vacation", "sick", "holiday", "off"] as const).map((k) => {
+            {(["vacation", "sick", "holiday", "off"] as const)
+              .filter((k) => k !== "off" || !isClockedIn)
+              .map((k) => {
               const meta = STATUS_META[k];
               return (
                 <button
@@ -1132,6 +1137,7 @@ export default function DesignPreview() {
         kind={quickMarkKind}
         date={new Date()}
         existingEntry={todayEntry}
+        isClockedIn={isClockedIn}
         settings={settings}
         onClose={() => setQuickMarkKind(null)}
         onSaved={refresh}

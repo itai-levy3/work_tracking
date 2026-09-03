@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { getCurrentUserEmail, isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
-import { addFoodEntry, deleteFoodEntry, enableFoodTracking, FoodEntry, getFoodEntriesForMonth, getSettings, updateFoodEntry, UserSettings } from "@/lib/localData";
+import { addFoodEntry, deleteFoodEntry, enableFoodTracking, FoodEntry, FoodPreset, getFoodEntriesForMonth, getSettings, saveSettings, updateFoodEntry, UserSettings } from "@/lib/localData";
 import { checkDailyCap, computeFoodMonthSummary, splitByDailyCap } from "@/lib/foodCard";
 import { verifyPin } from "@/lib/recoveryAuth";
 import { LH } from "./tokens";
@@ -49,7 +49,7 @@ export default function DesignPreviewFood() {
   const [amountInput, setAmountInput] = useState("");
   const [noteInput, setNoteInput] = useState("");
   const [dateInput, setDateInput] = useState(todayKey);
-  const [capConfirm, setCapConfirm] = useState<{ requested: number; note: string; cardAmount: number; personalTopUp: number } | null>(null);
+  const [capConfirm, setCapConfirm] = useState<{ requested: number; note: string; cardAmount: number; personalTopUp: number; date: string } | null>(null);
 
   const [detailEntry, setDetailEntry] = useState<FoodEntry | null>(null);
   const [editing, setEditing] = useState(false);
@@ -61,6 +61,12 @@ export default function DesignPreviewFood() {
   const [pinPromptValue, setPinPromptValue] = useState("");
   const [pinPromptBusy, setPinPromptBusy] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+
+  // Saved meal-place presets — one tap logs today's expense at that price instantly.
+  const [presetsManageOpen, setPresetsManageOpen] = useState(false);
+  const [presetEditingId, setPresetEditingId] = useState<string | null>(null);
+  const [presetNameDraft, setPresetNameDraft] = useState("");
+  const [presetAmountDraft, setPresetAmountDraft] = useState("");
 
   const refresh = () => {
     setEntries(getFoodEntriesForMonth(currentMonth.getFullYear(), currentMonth.getMonth()));
@@ -119,37 +125,48 @@ export default function DesignPreviewFood() {
     toast.success("מעקב האוכל מוכן! התוספת נכנסת אוטומטית למשכורת בדוחות.");
   };
 
-  const submitExpense = () => {
-    const amount = parseFloat(amountInput) || 0;
-    if (amount <= 0) return toast.error("יש להזין סכום תקין");
-    const entriesForDate = entries.filter((e) => e.date === dateInput);
+  /** Shared by the manual "add expense" form and one-tap preset buttons — checks the daily cap the
+   * same way either path, so a preset tap can trigger the same over-cap confirmation as typing. */
+  const logExpense = (amount: number, note: string, date: string) => {
+    const entriesForDate = entries.filter((e) => e.date === date);
     const check = checkDailyCap(entriesForDate, amount, settings.food_card_daily_cap);
     if (check.exceedsCapBy > 0) {
       const { cardAmount, personalTopUp } = splitByDailyCap(amount, check);
-      setCapConfirm({ requested: amount, note: noteInput, cardAmount, personalTopUp });
+      setCapConfirm({ requested: amount, note, cardAmount, personalTopUp, date });
       return;
     }
     addFoodEntry({
       id: crypto.randomUUID(),
-      date: dateInput,
-      time: dateInput === todayKey ? format(new Date(), "HH:mm") : undefined,
+      date,
+      time: date === todayKey ? format(new Date(), "HH:mm") : undefined,
       cardAmount: amount,
-      note: noteInput.trim() || undefined,
+      note: note.trim() || undefined,
     });
+    refresh();
+    toast.success("ההוצאה נרשמה");
+  };
+
+  const submitExpense = () => {
+    const amount = parseFloat(amountInput) || 0;
+    if (amount <= 0) return toast.error("יש להזין סכום תקין");
+    logExpense(amount, noteInput, dateInput);
     setAmountInput("");
     setNoteInput("");
     setDateInput(todayKey);
     setAddOpen(false);
-    refresh();
-    toast.success("ההוצאה נרשמה");
+  };
+
+  /** One tap: logs today's expense at the preset's saved price/name instantly. */
+  const logPreset = (preset: FoodPreset) => {
+    logExpense(preset.amount, preset.name, todayKey);
   };
 
   const confirmOverCap = () => {
     if (!capConfirm) return;
     addFoodEntry({
       id: crypto.randomUUID(),
-      date: dateInput,
-      time: dateInput === todayKey ? format(new Date(), "HH:mm") : undefined,
+      date: capConfirm.date,
+      time: capConfirm.date === todayKey ? format(new Date(), "HH:mm") : undefined,
       cardAmount: capConfirm.cardAmount,
       personalTopUp: capConfirm.personalTopUp,
       note: capConfirm.note.trim() || undefined,
@@ -195,6 +212,43 @@ export default function DesignPreviewFood() {
     setEditing(false);
     refresh();
     toast.success("ההוצאה עודכנה");
+  };
+
+  const openAddPreset = () => {
+    setPresetEditingId(null);
+    setPresetNameDraft("");
+    setPresetAmountDraft("");
+    setPresetsManageOpen(true);
+  };
+
+  const openEditPreset = (preset: FoodPreset) => {
+    setPresetEditingId(preset.id);
+    setPresetNameDraft(preset.name);
+    setPresetAmountDraft(String(preset.amount));
+    setPresetsManageOpen(true);
+  };
+
+  const savePreset = () => {
+    const name = presetNameDraft.trim();
+    const amount = parseFloat(presetAmountDraft) || 0;
+    if (!name) return toast.error("יש להזין שם למקום");
+    if (amount <= 0) return toast.error("יש להזין מחיר תקין");
+    const existing = settings.food_presets || [];
+    const next: FoodPreset[] = presetEditingId
+      ? existing.map((p) => (p.id === presetEditingId ? { ...p, name, amount } : p))
+      : [...existing, { id: crypto.randomUUID(), name, amount }];
+    const updated = { ...settings, food_presets: next };
+    saveSettings(updated);
+    setSettings(updated);
+    setPresetsManageOpen(false);
+    toast.success("המקום נשמר");
+  };
+
+  const deletePreset = (id: string) => {
+    const updated = { ...settings, food_presets: (settings.food_presets || []).filter((p) => p.id !== id) };
+    saveSettings(updated);
+    setSettings(updated);
+    setPresetsManageOpen(false);
   };
 
   // Deleting a food expense (card-tracked or not) requires the recovery PIN — the same PIN used
@@ -378,6 +432,29 @@ export default function DesignPreviewFood() {
                 )}
               </div>
 
+              {/* Saved meal places — one tap logs today's expense instantly at the saved price */}
+              {(settings.food_presets || []).length > 0 && (
+                <div className="flex flex-col gap-2 mb-4">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-[12px] font-bold" style={{ color: LH.onSurfaceVariant }}>מקומות קבועים</span>
+                    <button onClick={openAddPreset} className="text-[11.5px] font-bold" style={{ color: grad[0] }}>ניהול</button>
+                  </div>
+                  <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+                    {(settings.food_presets || []).map((preset) => (
+                      <button
+                        key={preset.id}
+                        onClick={() => logPreset(preset)}
+                        className="food-btn shrink-0 flex flex-col items-start gap-0.5 rounded-2xl px-4 py-2.5"
+                        style={{ background: "rgba(255,255,255,0.8)", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.7)", boxShadow: "0 8px 20px rgba(35,50,100,0.05)" }}
+                      >
+                        <span className="text-[12.5px] font-bold whitespace-nowrap" style={{ color: "#101A46" }}>{preset.name}</span>
+                        <span dir="ltr" className="text-[13px] font-extrabold tabular-nums" style={{ color: grad[0] }}>{money(preset.amount)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <button
                 onClick={() => setAddOpen(true)}
                 className="food-btn w-full h-12 rounded-2xl font-bold text-white flex items-center justify-center gap-2 mb-6"
@@ -386,6 +463,11 @@ export default function DesignPreviewFood() {
                 <span className="material-symbols-outlined text-[20px]">add_circle</span>
                 הוספת הוצאת אוכל
               </button>
+              {(settings.food_presets || []).length === 0 && (
+                <button onClick={openAddPreset} className="text-[12px] font-bold -mt-4 mb-6 self-center" style={{ color: grad[0] }}>
+                  + הוספת מקום קבוע
+                </button>
+              )}
 
               {/* Entries list */}
               <div className="flex flex-col gap-3">
@@ -435,6 +517,48 @@ export default function DesignPreviewFood() {
       </main>
 
       <LHBottomNav active="food" foodEnabled={!!settings.food_card_enabled} />
+
+      {/* Manage saved meal places — add/edit/delete presets */}
+      {presetsManageOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-6" style={{ background: "rgba(16,26,70,0.5)", backdropFilter: "blur(4px)" }} onClick={() => setPresetsManageOpen(false)}>
+          <div
+            className="lh-rise w-full max-w-[360px] rounded-[32px] p-6 flex flex-col gap-4"
+            style={{ background: "linear-gradient(180deg, rgba(255,255,255,0.97), rgba(255,251,245,0.99))", backdropFilter: "blur(30px)", boxShadow: "0 30px 70px -15px rgba(16,26,70,0.35)", border: "1px solid rgba(255,255,255,0.85)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined" style={{ color: "#F59E0B" }}>storefront</span>
+              <h3 className="text-[16px] font-bold" style={{ color: "#101A46" }}>מקומות קבועים</h3>
+            </div>
+
+            {(settings.food_presets || []).length > 0 && (
+              <div className="flex flex-col gap-2">
+                {(settings.food_presets || []).map((preset) => (
+                  <div key={preset.id} className="flex items-center justify-between rounded-2xl px-4 py-2.5" style={{ background: "rgba(35,50,100,0.04)" }}>
+                    <button onClick={() => openEditPreset(preset)} className="flex-1 text-right">
+                      <span className="text-[13px] font-bold block" style={{ color: "#101A46" }}>{preset.name}</span>
+                      <span dir="ltr" className="text-[12px] font-bold block" style={{ color: "#F59E0B" }}>{money(preset.amount)}</span>
+                    </button>
+                    <button onClick={() => deletePreset(preset.id)} className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(220,38,38,0.08)", color: "#DC2626" }}>
+                      <span className="material-symbols-outlined text-[15px]">close</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="pt-2 flex flex-col gap-3" style={{ borderTop: "1px solid rgba(35,50,100,0.08)" }}>
+              <span className="text-[12px] font-bold" style={{ color: LH.onSurfaceVariant }}>{presetEditingId ? "עריכת מקום" : "מקום חדש"}</span>
+              <input type="text" value={presetNameDraft} onChange={(e) => setPresetNameDraft(e.target.value)} placeholder='למשל: "מסעדה ליד העבודה"' className="w-full h-11 rounded-2xl px-4 text-[14px]" style={{ background: "#fff", border: "1px solid #e4e1e6", color: "#101A46" }} />
+              <input type="number" value={presetAmountDraft} onChange={(e) => setPresetAmountDraft(e.target.value)} placeholder="מחיר ₪" className="w-full h-11 rounded-2xl px-4 text-[15px] font-bold" style={{ background: "#fff", border: "1px solid #e4e1e6", color: "#101A46" }} />
+              <div className="flex gap-2">
+                <button onClick={() => setPresetsManageOpen(false)} className="flex-1 h-11 rounded-2xl font-bold" style={{ background: "rgba(35,50,100,0.06)", color: LH.onSurfaceVariant }}>ביטול</button>
+                <button onClick={savePreset} className="flex-1 h-11 rounded-2xl font-bold text-white" style={{ background: "linear-gradient(155deg,#F59E0B,#FB923C)" }}>{presetEditingId ? "שמירה" : "הוספה"}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add expense sheet */}
       {addOpen && (
