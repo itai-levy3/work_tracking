@@ -23,6 +23,33 @@ export const globalStyle = `
   @keyframes lh-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 `;
 
+const loadingStyle = `
+  @keyframes lh-loading-fill { 0% { width: 4%; } 55% { width: 68%; } 100% { width: 92%; } }
+  .lh-loading-bar { width: 4%; animation: lh-loading-fill 1.8s cubic-bezier(.2,.8,.3,1) forwards; }
+  @keyframes lh-loading-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.06); opacity: 0.85; } }
+  .lh-loading-badge { animation: lh-loading-pulse 1.6s ease-in-out infinite; }
+`;
+
+/** Full-screen branded loading state — a progress bar that reads as "actually going somewhere"
+ * instead of a bare spinner, shown while a page's own data (settings/entries/auth check) loads. */
+export function LHLoadingScreen() {
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center gap-6" style={{ background: LH.background }}>
+      <style>{loadingStyle}</style>
+      <div
+        className="lh-loading-badge w-16 h-16 rounded-2xl flex items-center justify-center"
+        style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 20px 45px -12px rgba(118,57,255,0.5)" }}
+      >
+        <span className="material-symbols-outlined text-white" style={{ fontSize: 30 }}>bolt</span>
+      </div>
+      <div className="w-48 h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(35,50,100,0.08)" }}>
+        <div className="lh-loading-bar h-full rounded-full" style={{ background: "linear-gradient(90deg,#7639FF,#00D2FF)" }} />
+      </div>
+      <span className="text-[11.5px] font-bold tracking-[0.1em] uppercase" style={{ color: "#8892b0" }}>טוען נתונים...</span>
+    </div>
+  );
+}
+
 export function LHHeader() {
   return (
     <header className="fixed top-0 inset-x-0 z-50 bg-[#F8FAFF]/70 backdrop-blur-2xl" style={{ paddingTop: "env(safe-area-inset-top,0px)" }}>

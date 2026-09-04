@@ -23,7 +23,7 @@ import {
 } from "@/lib/localData";
 import { exportMonthlyPayslipPdf } from "@/lib/pdfExport";
 import { LH } from "./tokens";
-import { LHHeader, LHBottomNav, globalStyle } from "./Shared";
+import { LHHeader, LHBottomNav, LHLoadingScreen, globalStyle } from "./Shared";
 
 const MONTH_HE = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
 const money = (n: number) => `₪${n.toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
@@ -141,11 +141,7 @@ export default function DesignPreviewReports() {
   }, [settings, currentMonth]);
 
   if (loading || !settings || !payroll || !projectedPayroll || !currentToDatePayroll) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: LH.background }}>
-        <div className="w-12 h-12 rounded-full border-2 animate-spin" style={{ borderColor: `${LH.primary}33`, borderTopColor: LH.primary }} />
-      </div>
-    );
+    return <LHLoadingScreen />;
   }
 
   const totalHours = payroll.regularHours + payroll.overtimeHours;

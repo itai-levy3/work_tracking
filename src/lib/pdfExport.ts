@@ -321,18 +321,28 @@ export const exportAnnualPayslipPdf = async (year: number, settings: UserSetting
   return true;
 };
 
+const AUTO_ARCHIVE_LAST_RUN_KEY = "worktrack_auto_archive_last_run";
+
 /**
  * Silently (re)archives the payslip PDF for any of the last 3 calendar months (not the current,
- * still-in-progress one) that has real work-hour data. Safe to call on every app load — it always
- * regenerates from the current hours/settings rather than skipping months already archived, so
- * editing a past month's hours (e.g. fixing a forgotten clock-out a week later) automatically
- * refreshes that month's stored PDF next time the app loads, including any knock-on change to
- * deferred overtime (computeMonthlyPayroll already carries a month's own overtime into the
- * following month's payroll when that setting is on, so the regenerated PDF reflects it on both
- * sides automatically). This is where the gross salary actually gets written down permanently,
- * since the live "מסע התשלום" forecast never leads with it.
+ * still-in-progress one) that has real work-hour data — always regenerating from the current
+ * hours/settings rather than skipping months already archived, so editing a past month's hours
+ * (e.g. fixing a forgotten clock-out a week later) eventually refreshes that month's stored PDF,
+ * including any knock-on change to deferred overtime. This is where the gross salary actually gets
+ * written down permanently, since the live "מסע התשלום" forecast never leads with it.
+ *
+ * Rendering 3 full payslips (each a real DOM mount + html2canvas rasterize + base64 encode, then a
+ * network push) is genuinely heavy — running it on every single app open made cold loads feel slow
+ * for no benefit, since the archive only needs to be "eventually consistent," not instant. This
+ * throttles it to once per calendar day via a plain localStorage timestamp.
  */
 export const autoArchiveCompletedMonths = async (settings: UserSettings, firstName = ""): Promise<void> => {
+  const todayKey = new Date().toDateString();
+  try {
+    if (localStorage.getItem(AUTO_ARCHIVE_LAST_RUN_KEY) === todayKey) return;
+  } catch {
+    // localStorage unavailable (e.g. private browsing edge cases) — fall through and run anyway.
+  }
   const now = new Date();
   for (let back = 1; back <= 3; back++) {
     const d = new Date(now.getFullYear(), now.getMonth() - back, 1);
@@ -342,5 +352,10 @@ export const autoArchiveCompletedMonths = async (settings: UserSettings, firstNa
     if (!entries || entries.length === 0) continue;
     const dataUrl = await generateMonthlyPayslipDataUrl(year, month, settings, firstName);
     archiveMonthlyPdf(year, month, dataUrl);
+  }
+  try {
+    localStorage.setItem(AUTO_ARCHIVE_LAST_RUN_KEY, todayKey);
+  } catch {
+    // Non-fatal — worst case it just runs again next load too.
   }
 };

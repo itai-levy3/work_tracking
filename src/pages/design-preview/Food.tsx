@@ -7,7 +7,7 @@ import { addFoodEntry, deleteFoodEntry, enableFoodTracking, FoodEntry, FoodPrese
 import { checkDailyCap, computeFoodMonthSummary, splitByDailyCap } from "@/lib/foodCard";
 import { verifyPin } from "@/lib/recoveryAuth";
 import { LH } from "./tokens";
-import { LHHeader, LHBottomNav, globalStyle } from "./Shared";
+import { LHHeader, LHBottomNav, LHLoadingScreen, globalStyle } from "./Shared";
 
 const MONTH_HE = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
 const money = (n: number) => `₪${Math.round(n).toLocaleString("he-IL")}`;
@@ -99,11 +99,7 @@ export default function DesignPreviewFood() {
   const isLow = remainingPct <= 15;
 
   if (loading || !settings) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: LH.background }}>
-        <div className="w-12 h-12 rounded-full border-2 animate-spin" style={{ borderColor: "#F5970033", borderTopColor: "#F59E0B" }} />
-      </div>
-    );
+    return <LHLoadingScreen />;
   }
 
   const startOnboarding = () => setOnboardStep("ask_card");

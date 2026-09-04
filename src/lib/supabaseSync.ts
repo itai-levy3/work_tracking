@@ -318,7 +318,10 @@ export const pullAllFromSupabase = async (): Promise<PulledData | null> => {
     supabase.from("settings").select("*").eq("user_id", userId).maybeSingle(),
     supabase.from("work_hours").select("*").eq("user_id", userId),
     supabase.from("food_entries").select("*").eq("user_id", userId),
-    supabase.from("pdf_archive").select("*").eq("user_id", userId),
+    // Only the 3 most recent months — that's all the local cache ever keeps. Older archived
+    // payslips (each a multi-hundred-KB base64 PDF) are fetched on demand per month instead
+    // (getArchivedPdfForMonth) rather than downloaded in full on every login/app open.
+    supabase.from("pdf_archive").select("*").eq("user_id", userId).order("year", { ascending: false }).order("month", { ascending: false }).limit(3),
     supabase.from("payroll_actuals").select("*").eq("user_id", userId),
   ]);
 

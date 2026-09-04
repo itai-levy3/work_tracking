@@ -22,7 +22,7 @@ import {
 } from "@/lib/localData";
 import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { LHBottomNav } from "./design-preview/Shared";
+import { LHBottomNav, LHLoadingScreen } from "./design-preview/Shared";
 import { DayDetailModal } from "./design-preview/DayDetailModal";
 import { ClockInEditModal } from "./design-preview/ClockInEditModal";
 import { QuickDayMarkModal } from "./design-preview/QuickDayMarkModal";
@@ -408,11 +408,7 @@ export default function DesignPreview() {
   };
 
   if (loading || !settings) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "#F8FAFF" }}>
-        <div className="w-12 h-12 rounded-full border-2 animate-spin" style={{ borderColor: "#7639FF33", borderTopColor: "#7639FF" }} />
-      </div>
-    );
+    return <LHLoadingScreen />;
   }
 
   // Sorted newest-first. `workHours` is already scoped to the viewed month, so switching months

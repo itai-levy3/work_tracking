@@ -4,7 +4,7 @@ import { format } from "date-fns";
 import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import { DayStatus, getCountedHours, getSettings, getWorkHoursForMonth, UserSettings, WorkHour } from "@/lib/localData";
 import { LH, STATUS_META } from "./tokens";
-import { LHHeader, LHBottomNav, globalStyle } from "./Shared";
+import { LHHeader, LHBottomNav, LHLoadingScreen, globalStyle } from "./Shared";
 import { DayDetailModal } from "./DayDetailModal";
 
 const weekdays = ["א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'"];
@@ -70,11 +70,7 @@ export default function DesignPreviewSchedule() {
   };
 
   if (loading || !settings) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: LH.background }}>
-        <div className="w-12 h-12 rounded-full border-2 animate-spin" style={{ borderColor: `${LH.primary}33`, borderTopColor: LH.primary }} />
-      </div>
-    );
+    return <LHLoadingScreen />;
   }
 
   return (

@@ -27,7 +27,7 @@ import { getCurrentUserEmail, isLocalAuthenticated, logoutLocalAuth } from "@/li
 import { checkSecurityAnswer, getRecoveryQuestionIds, hasRecoverySetup, lockAccount, saveRecoverySetup, SECURITY_QUESTIONS } from "@/lib/recoveryAuth";
 import { SecurityChallenge } from "./SecurityChallenge";
 import { LH } from "./tokens";
-import { LHHeader, LHBottomNav, globalStyle } from "./Shared";
+import { LHHeader, LHBottomNav, LHLoadingScreen, globalStyle } from "./Shared";
 
 /** Common (not exhaustive) credit-point categories — reference only, not tax advice. */
 const BASE_CREDIT_POINTS = 2.25;
@@ -598,11 +598,7 @@ export default function DesignPreviewSettings() {
   };
 
   if (loading || !settings) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: LH.background }}>
-        <div className="w-12 h-12 rounded-full border-2 animate-spin" style={{ borderColor: `${LH.primary}33`, borderTopColor: LH.primary }} />
-      </div>
-    );
+    return <LHLoadingScreen />;
   }
 
   return (
