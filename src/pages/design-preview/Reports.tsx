@@ -128,6 +128,7 @@ export default function DesignPreviewReports() {
   // gauge below measures progress against.
   const monthlyGoalHours = useMemo(() => {
     if (!settings) return 0;
+    if (settings.employment_type === "part_time") return settings.part_time_monthly_target_hours || 0;
     const y = currentMonth.getFullYear();
     const m = currentMonth.getMonth();
     const daysInMonth = new Date(y, m + 1, 0).getDate();

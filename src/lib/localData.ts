@@ -124,6 +124,16 @@ export interface PayLineItem {
 }
 
 export interface UserSettings {
+  /**
+   * "full_time" (default) = a fixed weekly schedule (work_days/hours_per_day) drives daily targets,
+   * overtime, and the deficit tracker. "part_time" = no fixed schedule at all — just a monthly hour
+   * goal (part_time_monthly_target_hours); every hour worked is paid at the plain hourly rate (no
+   * daily target to exceed, so no overtime tiers), and clocking in asks how many hours are planned
+   * today (or leaves it open, counting up instead of down until clocked out).
+   */
+  employment_type?: "full_time" | "part_time";
+  /** Monthly hours goal for a part-time schedule — purely a personal target, not a payroll cap. */
+  part_time_monthly_target_hours?: number;
   work_days: Record<string, boolean>;
   hours_per_day: Record<string, number>;
   hourly_rate: number;
@@ -324,6 +334,8 @@ const STORAGE_KEY = "worktrack_local_data_by_user_v1";
 const LEGACY_STORAGE_KEY = "worktrack_local_data_v1";
 
 const defaultSettings: UserSettings = {
+  employment_type: "full_time",
+  part_time_monthly_target_hours: 0,
   work_days: {
     monday: true,
     tuesday: true,
@@ -402,6 +414,11 @@ const safeParseUserData = (raw: string | null): LocalDataShape => {
     const parsed = JSON.parse(raw) as Partial<LocalDataShape>;
     return {
       settings: {
+        employment_type: parsed.settings?.employment_type ?? defaultSettings.employment_type,
+        part_time_monthly_target_hours:
+          typeof parsed.settings?.part_time_monthly_target_hours === "number"
+            ? parsed.settings.part_time_monthly_target_hours
+            : defaultSettings.part_time_monthly_target_hours,
         work_days: parsed.settings?.work_days ?? defaultSettings.work_days,
         hours_per_day: parsed.settings?.hours_per_day ?? defaultSettings.hours_per_day,
         hourly_rate:
@@ -628,6 +645,10 @@ const WEEKDAY_KEYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "f
 
 /** Scheduled target hours for the weekday a given yyyy-MM-dd date string falls on. */
 export const getDailyTargetHoursForDate = (dateStr: string, settings: UserSettings): number => {
+  // Part-time has no fixed weekly schedule at all — only a monthly hours goal — so there's never a
+  // per-day target to exceed. This also means every worked hour is "regular" (no overtime tiers);
+  // see computeRawMonthPay's useOvertime.
+  if (settings.employment_type === "part_time") return 0;
   const date = new Date(`${dateStr}T00:00:00`);
   const weekday = WEEKDAY_KEYS[date.getDay()];
   // A day not scheduled as a work day has a 0 target — any hours worked on it are entirely
@@ -965,7 +986,9 @@ interface RawMonthPay {
 const computeRawMonthPay = (year: number, month: number, settings: UserSettings, entriesOverride?: WorkHour[]): RawMonthPay => {
   const entries = entriesOverride ?? getWorkHoursForMonth(year, month);
   const baseRate = computeEffectiveHourlyRateForMonth(year, month, settings);
-  const useOvertime = settings.overtime_calc_enabled !== false;
+  // Part-time has no daily target to exceed (getDailyTargetHoursForDate always returns 0 for it),
+  // so overtime tiers never apply there — every hour worked is plain regular hourly pay.
+  const useOvertime = settings.overtime_calc_enabled !== false && settings.employment_type !== "part_time";
 
   let regularHours = 0;
   let overtimeHours = 0;
@@ -1125,16 +1148,23 @@ export const computeCurrentMonthToDatePayroll = (year: number, month: number, se
   const today = new Date();
   const isCurrentMonth = today.getFullYear() === year && today.getMonth() === month;
   const lastDay = isCurrentMonth ? today.getDate() : daysInMonth;
-  let scheduledInMonth = 0;
-  let scheduledSoFar = 0;
-  for (let d = 1; d <= daysInMonth; d++) {
-    const weekday = new Date(year, month, d).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
-    if (settings.work_days[weekday]) {
-      scheduledInMonth += 1;
-      if (d <= lastDay) scheduledSoFar += 1;
+  // Part-time has no weekly schedule to count scheduled work days against — prorate by plain
+  // calendar days elapsed instead, so flat additions/deductions don't silently show as zero.
+  let ratio: number;
+  if (settings.employment_type === "part_time") {
+    ratio = daysInMonth > 0 ? Math.min(1, lastDay / daysInMonth) : 0;
+  } else {
+    let scheduledInMonth = 0;
+    let scheduledSoFar = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const weekday = new Date(year, month, d).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
+      if (settings.work_days[weekday]) {
+        scheduledInMonth += 1;
+        if (d <= lastDay) scheduledSoFar += 1;
+      }
     }
+    ratio = scheduledInMonth > 0 ? Math.min(1, scheduledSoFar / scheduledInMonth) : 0;
   }
-  const ratio = scheduledInMonth > 0 ? Math.min(1, scheduledSoFar / scheduledInMonth) : 0;
 
   const fixedComponentsTotal = (settings.fixed_components || []).reduce((s, c) => s + (c.amount || 0), 0) * ratio;
   const deductionsTotal = (settings.deductions || []).reduce((s, d) => s + (d.amount || 0), 0) * ratio;

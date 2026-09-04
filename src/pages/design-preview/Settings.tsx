@@ -140,6 +140,8 @@ export default function DesignPreviewSettings() {
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
   const [workDaysDraft, setWorkDaysDraft] = useState<Record<string, boolean>>({});
   const [hoursPerDayDraft, setHoursPerDayDraft] = useState<Record<string, number>>({});
+  const [employmentTypeDraft, setEmploymentTypeDraft] = useState<"full_time" | "part_time">("full_time");
+  const [partTimeTargetDraft, setPartTimeTargetDraft] = useState("0");
 
   const [rateDialogOpen, setRateDialogOpen] = useState(false);
   const [rateInput, setRateInput] = useState("0");
@@ -264,11 +266,19 @@ export default function DesignPreviewSettings() {
     if (!settings) return;
     setWorkDaysDraft({ ...settings.work_days });
     setHoursPerDayDraft({ ...settings.hours_per_day });
+    setEmploymentTypeDraft(settings.employment_type ?? "full_time");
+    setPartTimeTargetDraft(String(settings.part_time_monthly_target_hours ?? 0));
     setScheduleDialogOpen(true);
   };
   const saveSchedule = () => {
     if (!settings) return;
-    persist({ ...settings, work_days: workDaysDraft, hours_per_day: hoursPerDayDraft });
+    persist({
+      ...settings,
+      employment_type: employmentTypeDraft,
+      part_time_monthly_target_hours: parseFloat(partTimeTargetDraft) || 0,
+      work_days: workDaysDraft,
+      hours_per_day: hoursPerDayDraft,
+    });
     setScheduleDialogOpen(false);
     toast.success("לוח העבודה עודכן");
   };
@@ -792,14 +802,20 @@ export default function DesignPreviewSettings() {
           <Section icon="timer" title="נוכחות">
             <Row
               title="לוח עבודה ושעות יעד"
-              value={`${workDaysSummary()} · עד ${avgDailyTargetSummary()}`}
+              value={
+                settings.employment_type === "part_time"
+                  ? `משרה חלקית · יעד ${formatHM(settings.part_time_monthly_target_hours || 0)} שעות לחודש`
+                  : `${workDaysSummary()} · עד ${avgDailyTargetSummary()}`
+              }
               onClick={() =>
-                openView(
-                  "לוח עבודה ושעות יעד",
-                  "calendar_month",
-                  days.map((d) => ({ label: d.label, value: settings.work_days[d.key] ? `${formatHM(settings.hours_per_day[d.key] || 0)} שעות` : "לא עובד" })),
-                  openScheduleDialog,
-                )
+                settings.employment_type === "part_time"
+                  ? openScheduleDialog()
+                  : openView(
+                      "לוח עבודה ושעות יעד",
+                      "calendar_month",
+                      days.map((d) => ({ label: d.label, value: settings.work_days[d.key] ? `${formatHM(settings.hours_per_day[d.key] || 0)} שעות` : "לא עובד" })),
+                      openScheduleDialog,
+                    )
               }
             />
             <ToggleRow
@@ -1094,27 +1110,54 @@ export default function DesignPreviewSettings() {
           <DialogHeader>
             <DialogTitle style={{ color: LH.onSurface }}>לוח עבודה ושעות יעד</DialogTitle>
           </DialogHeader>
-          <div className="flex flex-col gap-2.5">
-            {days.map((d) => (
-              <div key={d.key} className="flex items-center justify-between gap-3 p-3 rounded-2xl" style={{ background: workDaysDraft[d.key] ? `${LH.primary}0D` : `${LH.surfaceVariant}33` }}>
-                <div className="flex items-center gap-3">
-                  <Toggle on={!!workDaysDraft[d.key]} onChange={(v) => setWorkDaysDraft((prev) => ({ ...prev, [d.key]: v }))} />
-                  <span className="text-[14px] font-medium" style={{ color: LH.onSurface }}>{d.label}</span>
-                </div>
-                <input
-                  type="number"
-                  step="0.5"
-                  min="0"
-                  max="24"
-                  value={zeroToEmpty(hoursPerDayDraft[d.key] ?? 0)}
-                  onChange={(e) => setHoursPerDayDraft((prev) => ({ ...prev, [d.key]: parseFloat(e.target.value) || 0 }))}
-                  disabled={!workDaysDraft[d.key]}
-                  placeholder="0"
-                  style={{ ...dialogFieldStyle, width: 72, textAlign: "center", padding: "8px 6px" }}
-                />
-              </div>
-            ))}
+
+          <div className="flex items-center justify-between gap-3 p-3 rounded-2xl mb-1" style={{ background: employmentTypeDraft === "part_time" ? "rgba(118,57,255,0.06)" : `${LH.surfaceVariant}33` }}>
+            <div>
+              <span className="text-[14px] font-bold block" style={{ color: LH.onSurface }}>עבודה במשרה חלקית</span>
+              <span className="text-[11px]" style={{ color: LH.onSurfaceVariant }}>ללא לוח קבוע — רק יעד שעות חודשי</span>
+            </div>
+            <Toggle on={employmentTypeDraft === "part_time"} onChange={(v) => setEmploymentTypeDraft(v ? "part_time" : "full_time")} />
           </div>
+
+          {employmentTypeDraft === "part_time" ? (
+            <div className="flex flex-col gap-2">
+              <label className="text-[12px] font-medium block" style={{ color: LH.onSurfaceVariant }}>יעד שעות חודשי</label>
+              <input
+                type="number"
+                step="0.5"
+                min="0"
+                value={zeroToEmpty(parseFloat(partTimeTargetDraft) || 0)}
+                onChange={(e) => setPartTimeTargetDraft(e.target.value)}
+                placeholder="לדוגמה: 50"
+                style={dialogFieldStyle}
+              />
+              <p className="text-[11px]" style={{ color: LH.onSurfaceVariant }}>
+                בלי לוח עבודה קבוע, "נכנסתי עכשיו" ישאל בכל פעם כמה שעות מתוכננות היום (או לא מוגדר, ואז הטיימר סופר קדימה עד שתעצור). השכר מחושב לפי שעה × שעות בפועל, ללא שעות נוספות.
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              {days.map((d) => (
+                <div key={d.key} className="flex items-center justify-between gap-3 p-3 rounded-2xl" style={{ background: workDaysDraft[d.key] ? `${LH.primary}0D` : `${LH.surfaceVariant}33` }}>
+                  <div className="flex items-center gap-3">
+                    <Toggle on={!!workDaysDraft[d.key]} onChange={(v) => setWorkDaysDraft((prev) => ({ ...prev, [d.key]: v }))} />
+                    <span className="text-[14px] font-medium" style={{ color: LH.onSurface }}>{d.label}</span>
+                  </div>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    max="24"
+                    value={zeroToEmpty(hoursPerDayDraft[d.key] ?? 0)}
+                    onChange={(e) => setHoursPerDayDraft((prev) => ({ ...prev, [d.key]: parseFloat(e.target.value) || 0 }))}
+                    disabled={!workDaysDraft[d.key]}
+                    placeholder="0"
+                    style={{ ...dialogFieldStyle, width: 72, textAlign: "center", padding: "8px 6px" }}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
           <button onClick={saveSchedule} className="w-full h-11 rounded-xl font-bold text-white mt-2" style={{ background: LH.primary }}>שמירה</button>
         </DialogContent>
       </Dialog>

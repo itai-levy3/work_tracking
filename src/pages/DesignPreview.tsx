@@ -48,6 +48,9 @@ export default function DesignPreview() {
   const [attendanceExpanded, setAttendanceExpanded] = useState(false);
   const [offDayPrompt, setOffDayPrompt] = useState(false);
   const [offDayHoursInput, setOffDayHoursInput] = useState("8");
+  const [partTimeHoursPrompt, setPartTimeHoursPrompt] = useState(false);
+  const [partTimeHoursInput, setPartTimeHoursInput] = useState("");
+  const [partTimeEveningPending, setPartTimeEveningPending] = useState(false);
   const [eveningConfirmOpen, setEveningConfirmOpen] = useState(false);
   const [overtimeInfoOpen, setOvertimeInfoOpen] = useState(false);
 
@@ -117,9 +120,12 @@ export default function DesignPreview() {
     loadMonth(currentMonth, settings);
   };
 
+  const isPartTime = settings?.employment_type === "part_time";
+
   // ---- Derived stats ----
   const monthlyGoal = useMemo(() => {
     if (!settings) return 0;
+    if (settings.employment_type === "part_time") return settings.part_time_monthly_target_hours || 0;
     const year = currentMonth.getFullYear();
     const month = currentMonth.getMonth();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -232,6 +238,9 @@ export default function DesignPreview() {
   // see getDailyTargetHoursForDate). If the user confirmed a one-time shift, oneTimePlannedHours
   // carries the duration they stated purely for the countdown / estimated-exit display below.
   const displayTarget = todayEntry?.oneTimePlannedHours || todayTarget;
+  // Part-time with no planned hours today: no target at all, so the giant clock counts up like a
+  // plain stopwatch instead of counting down/into "overtime" against a target that doesn't exist.
+  const isOpenStopwatch = isPartTime && !todayEntry?.oneTimePlannedHours;
 
   // live countdown while clocked in
   const countdown = useMemo(() => {
@@ -335,6 +344,15 @@ export default function DesignPreview() {
   };
   const handleClockIn = (evening?: boolean) => {
     if (!settings) return;
+    // Part-time has no fixed daily schedule at all — every clock-in asks how many hours are
+    // planned today (drives a countdown, same as a one-time shift), or leaves it open to count up
+    // instead, until the user stops it.
+    if (settings.employment_type === "part_time") {
+      setPartTimeHoursInput("");
+      setPartTimeEveningPending(!!evening);
+      setPartTimeHoursPrompt(true);
+      return;
+    }
     const weekday = new Date().toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
     const isScheduledWorkDay = !!settings.work_days[weekday];
     if (!isScheduledWorkDay) {
@@ -343,6 +361,12 @@ export default function DesignPreview() {
       return;
     }
     doClockIn(undefined, evening);
+  };
+
+  const confirmPartTimeClockIn = (definedHours: boolean) => {
+    const hours = definedHours ? parseFloat(partTimeHoursInput.replace(/[^0-9.]/g, "")) || 0 : 0;
+    setPartTimeHoursPrompt(false);
+    doClockIn(definedHours && hours > 0 ? hours : undefined, partTimeEveningPending);
   };
   /** Human summary of the configured overtime rates, e.g. "שעה 1: 125% · שעה 2: 150%". */
   const overtimeTiersSummary = (() => {
@@ -523,19 +547,27 @@ export default function DesignPreview() {
                   letterSpacing: "-0.03em",
                   fontWeight: 800,
                   paddingInline: 6,
-                  backgroundImage: countdown?.overtime
-                    ? "linear-gradient(160deg,#0F766E 10%,#19CEA0 100%)"
-                    : "linear-gradient(160deg,#101A46 10%,#3B4FA0 60%,#00A9D6 110%)",
+                  backgroundImage: isOpenStopwatch
+                    ? "linear-gradient(160deg,#7639FF 10%,#00D2FF 100%)"
+                    : countdown?.overtime
+                      ? "linear-gradient(160deg,#0F766E 10%,#19CEA0 100%)"
+                      : "linear-gradient(160deg,#101A46 10%,#3B4FA0 60%,#00A9D6 110%)",
                   WebkitBackgroundClip: "text",
                   backgroundClip: "text",
                   color: "transparent",
                   filter: "drop-shadow(0 4px 10px rgba(16,26,70,0.2))",
                 }}
               >
-                {countdown ? `${countdown.overtime ? "+" : ""}${countdown.text}` : "--:--:--"}
+                {countdown ? `${!isOpenStopwatch && countdown.overtime ? "+" : ""}${countdown.text}` : "--:--:--"}
               </span>
               <span className="text-[13px] font-bold tracking-[0.08em] mt-3 px-4 py-1.5 rounded-full border" style={{ color: "#7639FF", background: "rgba(118,57,255,0.07)", borderColor: "rgba(118,57,255,0.15)" }}>
-                {todayEntry?.oneTimePlannedHours ? `יום חד-פעמי: ${formatHM(displayTarget)} (הכל נוספות)` : `יעד יומי: ${formatHM(displayTarget)}`}
+                {isOpenStopwatch
+                  ? "טיימר פתוח — סוגרים מתי שרוצים"
+                  : isPartTime
+                    ? `יעד היום: ${formatHM(displayTarget)} שעות`
+                    : todayEntry?.oneTimePlannedHours
+                      ? `יום חד-פעמי: ${formatHM(displayTarget)} (הכל נוספות)`
+                      : `יעד יומי: ${formatHM(displayTarget)}`}
               </span>
             </div>
 
@@ -552,10 +584,12 @@ export default function DesignPreview() {
                 </span>
                 <span className="text-[24px] font-bold tabular-nums leading-none" style={{ color: "#101A46" }}>{todayEntry?.start_time || "--:--"}</span>
               </button>
-              <div className="flex-1 flex flex-col items-center bg-white/50 backdrop-blur-md rounded-2xl px-4 py-3 border border-white shadow-sm">
-                <span className="text-[12px] font-bold tracking-[0.08em] text-[#46464f] mb-1">{todayEntry?.end_time ? "יציאה" : "יציאה משוערת"}</span>
-                <span className="text-[24px] font-bold tabular-nums leading-none" style={{ color: "#101A46" }}>{todayEntry?.end_time || estimatedExit || "--:--"}</span>
-              </div>
+              {!isOpenStopwatch && (
+                <div className="flex-1 flex flex-col items-center bg-white/50 backdrop-blur-md rounded-2xl px-4 py-3 border border-white shadow-sm">
+                  <span className="text-[12px] font-bold tracking-[0.08em] text-[#46464f] mb-1">{todayEntry?.end_time ? "יציאה" : "יציאה משוערת"}</span>
+                  <span className="text-[24px] font-bold tabular-nums leading-none" style={{ color: "#101A46" }}>{todayEntry?.end_time || estimatedExit || "--:--"}</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1186,6 +1220,55 @@ export default function DesignPreview() {
                 style={{ background: "linear-gradient(155deg,#D97706,#FBBF24)", boxShadow: "0 14px 30px -10px rgba(217,119,6,0.5)" }}
               >
                 כן, התחל עבודה
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {partTimeHoursPrompt && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-6" style={{ background: "rgba(16,26,70,0.5)", backdropFilter: "blur(4px)" }} onClick={() => setPartTimeHoursPrompt(false)}>
+          <div
+            className="lh-rise w-full max-w-[360px] rounded-[32px] p-6 flex flex-col gap-4 relative overflow-hidden"
+            style={{ background: "linear-gradient(180deg, rgba(255,255,255,0.97), rgba(248,250,255,0.99))", backdropFilter: "blur(30px)", boxShadow: "0 30px 70px -15px rgba(16,26,70,0.35)", border: "1px solid rgba(255,255,255,0.85)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="absolute -top-14 -right-14 w-40 h-40 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(118,57,255,0.25), transparent 70%)", filter: "blur(20px)" }} />
+            <div className="flex items-center gap-3 relative z-10">
+              <div className="w-12 h-12 rounded-full flex items-center justify-center shrink-0" style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 10px 24px -8px rgba(118,57,255,0.5)" }}>
+                <span className="material-symbols-outlined text-white" style={{ fontSize: 24 }}>schedule</span>
+              </div>
+              <div>
+                <h3 className="text-[16px] font-bold" style={{ color: "#101A46" }}>כמה שעות אתה רוצה לעבוד היום?</h3>
+                <p className="text-[12px]" style={{ color: "#8892b0" }}>משרה חלקית · אפשר גם בלי לקבוע מראש</p>
+              </div>
+            </div>
+            <div className="relative z-10">
+              <input
+                type="number"
+                step="0.5"
+                min="0.5"
+                value={partTimeHoursInput}
+                onChange={(e) => setPartTimeHoursInput(e.target.value)}
+                placeholder="לדוגמה: 4"
+                className="w-full h-11 rounded-2xl px-4 text-[16px] font-bold outline-none"
+                style={{ background: "#fff", border: "1px solid #e4e1e6", color: "#101A46" }}
+              />
+            </div>
+            <div className="flex gap-2 relative z-10 mt-1">
+              <button
+                onClick={() => confirmPartTimeClockIn(false)}
+                className="flex-1 h-11 rounded-2xl font-bold"
+                style={{ background: "rgba(35,50,100,0.06)", color: "#46464f" }}
+              >
+                לא מוגדר
+              </button>
+              <button
+                onClick={() => confirmPartTimeClockIn(true)}
+                className="flex-1 h-11 rounded-2xl font-bold text-white"
+                style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 14px 30px -10px rgba(118,57,255,0.5)" }}
+              >
+                התחלת עבודה
               </button>
             </div>
           </div>

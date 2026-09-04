@@ -34,6 +34,8 @@ const logSyncError = (label: string, error: unknown) => {
 
 const toDbSettings = (settings: UserSettings, firstName: string, userId: string) => ({
   user_id: userId,
+  employment_type: settings.employment_type ?? "full_time",
+  part_time_monthly_target_hours: settings.part_time_monthly_target_hours ?? 0,
   work_days: settings.work_days,
   hours_per_day: settings.hours_per_day,
   hourly_rate: settings.hourly_rate,
@@ -81,6 +83,8 @@ const toDbSettings = (settings: UserSettings, firstName: string, userId: string)
 const fromDbSettings = (row: any): { settings: UserSettings; firstName: string } => ({
   firstName: row.first_name,
   settings: {
+    employment_type: row.employment_type ?? "full_time",
+    part_time_monthly_target_hours: Number(row.part_time_monthly_target_hours) || 0,
     work_days: row.work_days,
     hours_per_day: row.hours_per_day,
     hourly_rate: Number(row.hourly_rate) || 0,
