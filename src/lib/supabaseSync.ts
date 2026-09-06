@@ -275,6 +275,9 @@ export const pushPayrollActual = async (entry: PayrollActual): Promise<void> => 
       ai_analysis: entry.aiAnalysis ?? null,
       override_field: entry.overrideField ?? null,
       override_value: entry.overrideValue ?? null,
+      field_overrides: entry.fieldOverrides ?? null,
+      extra_additions: entry.extraAdditions ?? [],
+      extra_deductions: entry.extraDeductions ?? [],
       updated_at: entry.updatedAt,
     },
     { onConflict: "user_id,year,month" },
@@ -293,6 +296,9 @@ const fromDbPayrollActual = (row: any): PayrollActual => ({
   aiAnalysis: row.ai_analysis ?? undefined,
   overrideField: row.override_field ?? undefined,
   overrideValue: row.override_value != null ? Number(row.override_value) : undefined,
+  fieldOverrides: row.field_overrides ?? undefined,
+  extraAdditions: row.extra_additions ?? undefined,
+  extraDeductions: row.extra_deductions ?? undefined,
   updatedAt: row.updated_at,
 });
 

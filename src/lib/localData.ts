@@ -303,10 +303,19 @@ export interface PayrollActual {
   aiAnalysis?: string;
   /** A field from CORRECTABLE_PAYROLL_FIELDS the AI (or the user directly) pinned the deviation
    * to, with the value that would have made this month's estimate match what was actually
-   * received — applied either to just this month (via computeMonthlyPayrollWithOverride) or to
-   * settings permanently, per the user's choice. */
+   * received. Kept only for backward compatibility with records saved before fieldOverrides
+   * existed — new saves always use fieldOverrides instead, even for a single field. */
   overrideField?: string;
   overrideValue?: number;
+  /** Any number of CORRECTABLE_PAYROLL_FIELDS corrected at once for this month — the full manual
+   * editor lets the user fix income tax, National Insurance, Health Insurance, pension %, etc. all
+   * together, not just the one field the AI happened to detect. */
+  fieldOverrides?: Partial<Record<string, number>>;
+  /** One-off items for this month only (a bonus, a one-time deduction the AI/estimate missed) —
+   * applied directly to net (and to gross for additions) without re-running statutory tax, since
+   * these are corrections to what was actually paid, not part of the modeled salary structure. */
+  extraAdditions?: PayLineItem[];
+  extraDeductions?: PayLineItem[];
   updatedAt: string; // ISO timestamp
 }
 
@@ -804,9 +813,20 @@ export const computeCumulativeAccrued = (
   if (method === "monthly") {
     // One continuous timeline (not decomposed per calendar year) so a month that straddles a
     // Dec→Jan boundary is still credited correctly. The current in-progress month is credited
-    // immediately (matches a real payslip, which shows the current month's accrual right away).
-    const monthsElapsed = Math.max(0, (asOfDate.getFullYear() - start.getFullYear()) * 12 + (asOfDate.getMonth() - start.getMonth()) + 1);
-    return +((annualDays / 12) * monthsElapsed).toFixed(3);
+    // immediately (matches a real payslip, which shows the current month's accrual right away) —
+    // EXCEPT the very first month of employment, which only ever gets a share of that month's
+    // accrual proportional to how many of its days actually fall on/after the start date (starting
+    // mid-month means you didn't earn leave for the days before you started).
+    const perMonth = annualDays / 12;
+    const daysInStartMonth = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate();
+    const firstMonthFraction = (daysInStartMonth - start.getDate() + 1) / daysInStartMonth;
+    const monthsSinceStart = (asOfDate.getFullYear() - start.getFullYear()) * 12 + (asOfDate.getMonth() - start.getMonth());
+    if (monthsSinceStart <= 0) {
+      // Still within the first calendar month of employment.
+      return +(perMonth * firstMonthFraction).toFixed(3);
+    }
+    // First (prorated) month + every full month since, including the current in-progress one.
+    return +(perMonth * firstMonthFraction + perMonth * monthsSinceStart).toFixed(3);
   }
 
   // Lump sum: each calendar year re-grants its (possibly prorated) full quota immediately at
@@ -1226,6 +1246,44 @@ export const computeCurrentMonthToDatePayroll = (year: number, month: number, se
  * the allow-list is ignored (falls back to plain computeMonthlyPayroll) since it's never expected
  * to hold anything else, but a stray/legacy value must never silently patch an arbitrary field.
  */
+/**
+ * Patches `settings` with any number of CORRECTABLE_PAYROLL_FIELDS overrides at once — used to
+ * preview and apply a full manual correction to a month's payroll (income tax, National Insurance,
+ * Health Insurance, pension %, etc. all together) without touching the user's real settings.
+ * A field outside the allow-list is ignored, since fieldOverrides is never expected to hold
+ * anything else, but a stray/legacy value must never silently patch an arbitrary settings field.
+ */
+export const applyPayrollFieldOverrides = (settings: UserSettings, fieldOverrides: Partial<Record<string, number>> | undefined): UserSettings => {
+  if (!fieldOverrides) return settings;
+  const patched: UserSettings = { ...settings };
+  let touchedManual = false;
+  for (const [field, value] of Object.entries(fieldOverrides)) {
+    if (value === undefined || !CORRECTABLE_PAYROLL_FIELDS.some((f) => f.id === field)) continue;
+    (patched as unknown as Record<string, number>)[field] = value;
+    if (field.startsWith("manual_")) touchedManual = true;
+  }
+  // The manual_* deduction fields only ever feed the calculation in "manual" mode — patch that
+  // too for this preview, otherwise the override would silently have no effect.
+  if (touchedManual && patched.statutory_deduction_mode !== "manual") {
+    patched.statutory_deduction_mode = "manual";
+  }
+  return patched;
+};
+
+/** Folds a month's one-off extra additions/deductions directly into an already-computed payroll's
+ * net (and gross, for additions) — applied as flat corrections, not re-run through statutory tax. */
+export const applyPayrollExtras = (payroll: MonthlyPayroll, extraAdditions?: PayLineItem[], extraDeductions?: PayLineItem[]): MonthlyPayroll => {
+  const addTotal = (extraAdditions || []).reduce((s, a) => s + (a.amount || 0), 0);
+  const dedTotal = (extraDeductions || []).reduce((s, d) => s + (d.amount || 0), 0);
+  if (addTotal === 0 && dedTotal === 0) return payroll;
+  return {
+    ...payroll,
+    fixedComponentsTotal: payroll.fixedComponentsTotal + addTotal,
+    deductionsTotal: payroll.deductionsTotal + dedTotal,
+    netPay: payroll.netPay + addTotal - dedTotal,
+  };
+};
+
 export const computeMonthlyPayrollWithOverride = (
   year: number,
   month: number,
@@ -1233,15 +1291,8 @@ export const computeMonthlyPayrollWithOverride = (
   overrideField: string | undefined,
   overrideValue: number | undefined,
 ): MonthlyPayroll => {
-  const isAllowed = overrideField && CORRECTABLE_PAYROLL_FIELDS.some((f) => f.id === overrideField);
-  if (!isAllowed || overrideValue === undefined) return computeMonthlyPayroll(year, month, settings);
-  const patched: UserSettings = { ...settings, [overrideField]: overrideValue };
-  // The manual_* deduction fields only ever feed the calculation in "manual" mode — patch that
-  // too for this one-month preview, otherwise the override would silently have no effect.
-  if (overrideField.startsWith("manual_") && patched.statutory_deduction_mode !== "manual") {
-    patched.statutory_deduction_mode = "manual";
-  }
-  return computeMonthlyPayroll(year, month, patched);
+  if (!overrideField || overrideValue === undefined) return computeMonthlyPayroll(year, month, settings);
+  return computeMonthlyPayroll(year, month, applyPayrollFieldOverrides(settings, { [overrideField]: overrideValue }));
 };
 
 /**

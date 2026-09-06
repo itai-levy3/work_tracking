@@ -5,9 +5,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { analyzePayrollDeviation } from "@/lib/aiAssistant";
 import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import {
+  applyPayrollExtras,
+  applyPayrollFieldOverrides,
   computeCurrentMonthToDatePayroll,
   computeEffectiveHourlyRateForMonth,
-  computeMonthlyPayrollWithOverride,
+  computeMonthlyPayroll,
   computeProjectedMonthlyPayroll,
   CORRECTABLE_PAYROLL_FIELDS,
   formatHM,
@@ -15,6 +17,7 @@ import {
   getPayrollActual,
   getProfileFirstName,
   getSettings,
+  PayLineItem,
   PAYROLL_DEVIATION_REASONS,
   PdfArchiveEntry,
   savePayrollActual,
@@ -43,6 +46,13 @@ export default function DesignPreviewReports() {
   const [aiAnalysisLoading, setAiAnalysisLoading] = useState(false);
   const [actualSaved, setActualSaved] = useState(false);
   const [detectedField, setDetectedField] = useState<string | null>(null);
+
+  // Full manual editor — every correctable field at once, plus one-off extra line items for this
+  // month specifically (a bonus, a one-time deduction the estimate missed).
+  const [fullEditorOpen, setFullEditorOpen] = useState(false);
+  const [fieldDrafts, setFieldDrafts] = useState<Record<string, string>>({});
+  const [extraAdditionsDraft, setExtraAdditionsDraft] = useState<PayLineItem[]>([]);
+  const [extraDeductionsDraft, setExtraDeductionsDraft] = useState<PayLineItem[]>([]);
   // Bumped after every save so the payroll useMemo below (and this load effect) re-read the
   // just-written record — getPayrollActual itself isn't reactive state React can track.
   const [actualsVersion, setActualsVersion] = useState(0);
@@ -100,29 +110,48 @@ export default function DesignPreviewReports() {
     });
   }, [navigate]);
 
-  const payroll = useMemo(() => {
+  // Effective settings for the viewed month — patched with any saved field overrides (income tax,
+  // National Insurance, Health Insurance, pension %, etc.) from the actual-vs-estimated reconciliation,
+  // so a correction there is reflected everywhere this month is shown: the estimate below, the
+  // month-end forecast, AND the "נטו נכון להיום" hero — not just the one card that captured it.
+  const effectiveSettings = useMemo(() => {
     if (!settings) return null;
     const savedActual = getPayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
-    return computeMonthlyPayrollWithOverride(currentMonth.getFullYear(), currentMonth.getMonth(), settings, savedActual?.overrideField, savedActual?.overrideValue);
+    const fieldOverrides = savedActual?.fieldOverrides ?? (savedActual?.overrideField && savedActual.overrideValue !== undefined ? { [savedActual.overrideField]: savedActual.overrideValue } : undefined);
+    return applyPayrollFieldOverrides(settings, fieldOverrides);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings, currentMonth, actualsVersion]);
+
+  const payrollExtras = useMemo(() => {
+    const savedActual = getPayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
+    return { extraAdditions: savedActual?.extraAdditions, extraDeductions: savedActual?.extraDeductions };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMonth, actualsVersion]);
+
+  const payroll = useMemo(() => {
+    if (!effectiveSettings) return null;
+    const raw = computeMonthlyPayroll(currentMonth.getFullYear(), currentMonth.getMonth(), effectiveSettings);
+    return applyPayrollExtras(raw, payrollExtras.extraAdditions, payrollExtras.extraDeductions);
+  }, [effectiveSettings, currentMonth, payrollExtras]);
 
   // Full end-of-month forecast: same as `payroll` for already-earned figures, but the deduction
   // categories (and net) reflect the FULL month's expected gross — days that haven't happened yet
   // this month are projected from the schedule — so mid-month already shows what's really coming.
   const isCurrentMonth = new Date().getFullYear() === currentMonth.getFullYear() && new Date().getMonth() === currentMonth.getMonth();
   const projectedPayroll = useMemo(() => {
-    if (!settings) return null;
-    return computeProjectedMonthlyPayroll(currentMonth.getFullYear(), currentMonth.getMonth(), settings);
-  }, [settings, currentMonth]);
+    if (!effectiveSettings) return null;
+    const raw = computeProjectedMonthlyPayroll(currentMonth.getFullYear(), currentMonth.getMonth(), effectiveSettings);
+    return applyPayrollExtras(raw, payrollExtras.extraAdditions, payrollExtras.extraDeductions);
+  }, [effectiveSettings, currentMonth, payrollExtras]);
 
   // Net pay exactly as it stands right now, mid-month — flat additions/deductions prorated by how
   // much of the month's scheduled work days have elapsed, instead of the full-month forecast.
   const [currentNetOpen, setCurrentNetOpen] = useState(false);
   const currentToDatePayroll = useMemo(() => {
-    if (!settings) return null;
-    return computeCurrentMonthToDatePayroll(currentMonth.getFullYear(), currentMonth.getMonth(), settings);
-  }, [settings, currentMonth]);
+    if (!effectiveSettings) return null;
+    const raw = computeCurrentMonthToDatePayroll(currentMonth.getFullYear(), currentMonth.getMonth(), effectiveSettings);
+    return applyPayrollExtras(raw, payrollExtras.extraAdditions, payrollExtras.extraDeductions);
+  }, [effectiveSettings, currentMonth, payrollExtras]);
 
   // Scheduled base-salary target for the viewed month (hours × rate, no overtime) — what the arc
   // gauge below measures progress against.
@@ -180,6 +209,10 @@ export default function DesignPreviewReports() {
 
   const saveActualNet = (overrides: { overrideField?: string | null; overrideValue?: number } = {}) => {
     if (!hasActualNet) return;
+    // Preserve whatever the full editor already saved for this month (fieldOverrides/extras) —
+    // this simple save path only ever touches the actual-net figure and the single detected-field
+    // override, and must never silently wipe a more detailed correction made elsewhere.
+    const existing = getPayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
     savePayrollActual({
       year: currentMonth.getFullYear(),
       month: currentMonth.getMonth(),
@@ -190,6 +223,9 @@ export default function DesignPreviewReports() {
       aiAnalysis: aiAnalysis || undefined,
       overrideField: overrides.overrideField === null ? undefined : overrides.overrideField ?? detectedField ?? undefined,
       overrideValue: overrides.overrideValue,
+      fieldOverrides: existing?.fieldOverrides,
+      extraAdditions: existing?.extraAdditions,
+      extraDeductions: existing?.extraDeductions,
     });
     setActualsVersion((v) => v + 1);
     setActualSaved(true);
@@ -236,6 +272,73 @@ export default function DesignPreviewReports() {
     // already covers it (and every future month) going forward.
     saveActualNet({ overrideField: null });
     toast.success(`${detectedFieldMeta.label} עודכן לכל המשכורות מכאן ואילך`);
+  };
+
+  const openFullEditor = () => {
+    if (!settings) return;
+    const savedActual = getPayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
+    const overrides = savedActual?.fieldOverrides ?? (savedActual?.overrideField && savedActual.overrideValue !== undefined ? { [savedActual.overrideField]: savedActual.overrideValue } : undefined);
+    const drafts: Record<string, string> = {};
+    for (const f of CORRECTABLE_PAYROLL_FIELDS) {
+      const value = overrides?.[f.id] ?? (settings as unknown as Record<string, number>)[f.id] ?? 0;
+      drafts[f.id] = String(value);
+    }
+    setFieldDrafts(drafts);
+    setExtraAdditionsDraft(savedActual?.extraAdditions ? savedActual.extraAdditions.map((a) => ({ ...a })) : []);
+    setExtraDeductionsDraft(savedActual?.extraDeductions ? savedActual.extraDeductions.map((d) => ({ ...d })) : []);
+    setFullEditorOpen(true);
+  };
+
+  const draftFieldOverrides = (): Record<string, number> => {
+    const overrides: Record<string, number> = {};
+    for (const f of CORRECTABLE_PAYROLL_FIELDS) {
+      const v = parseFloat(fieldDrafts[f.id]);
+      if (!Number.isNaN(v)) overrides[f.id] = v;
+    }
+    return overrides;
+  };
+
+  const saveFullEditorThisMonth = () => {
+    savePayrollActual({
+      year: currentMonth.getFullYear(),
+      month: currentMonth.getMonth(),
+      actualNet: hasActualNet ? actualNetValue : payroll.netPay,
+      estimatedNet: payroll.netPay,
+      reasonId: deviationReasonId,
+      note: deviationNote.trim() || undefined,
+      aiAnalysis: aiAnalysis || undefined,
+      fieldOverrides: draftFieldOverrides(),
+      extraAdditions: extraAdditionsDraft.filter((a) => a.label.trim() && a.amount > 0),
+      extraDeductions: extraDeductionsDraft.filter((d) => d.label.trim() && d.amount > 0),
+    });
+    setActualsVersion((v) => v + 1);
+    setFullEditorOpen(false);
+    toast.success(`הפרטים עודכנו לחודש ${MONTH_HE[currentMonth.getMonth()]} בלבד`);
+  };
+
+  const saveFullEditorAllFutureMonths = () => {
+    if (!settings) return;
+    const overrides = draftFieldOverrides();
+    const nextSettings = applyPayrollFieldOverrides(settings, overrides);
+    saveSettings(nextSettings);
+    setSettings(nextSettings);
+    // The permanent settings change now covers this field for every month — this record only
+    // needs to keep the one-off extras, which by definition never become permanent.
+    savePayrollActual({
+      year: currentMonth.getFullYear(),
+      month: currentMonth.getMonth(),
+      actualNet: hasActualNet ? actualNetValue : payroll.netPay,
+      estimatedNet: payroll.netPay,
+      reasonId: deviationReasonId,
+      note: deviationNote.trim() || undefined,
+      aiAnalysis: aiAnalysis || undefined,
+      fieldOverrides: undefined,
+      extraAdditions: extraAdditionsDraft.filter((a) => a.label.trim() && a.amount > 0),
+      extraDeductions: extraDeductionsDraft.filter((d) => d.label.trim() && d.amount > 0),
+    });
+    setActualsVersion((v) => v + 1);
+    setFullEditorOpen(false);
+    toast.success("הפרטים עודכנו לכל המשכורות מכאן ואילך");
   };
 
   return (
@@ -458,6 +561,15 @@ export default function DesignPreviewReports() {
                 style={{ background: actualSaved ? "rgba(15,118,110,0.1)" : `${LH.primary}0F`, color: actualSaved ? "#0F766E" : LH.primary }}
               >
                 {actualSaved ? "נשמר ✓" : "שמירה"}
+              </button>
+
+              <button
+                onClick={openFullEditor}
+                className="w-full h-10 rounded-2xl font-bold mt-2 flex items-center justify-center gap-1.5 text-[12.5px]"
+                style={{ background: "transparent", color: LH.primary, border: `1px dashed ${LH.primary}55` }}
+              >
+                <span className="material-symbols-outlined text-[16px]">tune</span>
+                עריכת כל פרטי השכר (מס, ביטוח לאומי, בריאות, תוספות...)
               </button>
             </div>
           </div>
@@ -916,6 +1028,114 @@ export default function DesignPreviewReports() {
             <span className="text-[11px] font-medium" style={{ color: LH.onSurfaceVariant }}>
               מבוסס על השעות שכבר עבדת, ותוספות/ניכויים קבועים יחסית לימי העבודה שכבר עברו החודש — לא תחזית לסוף החודש.
             </span>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Full manual payroll editor — every correctable field + one-off extras for this month */}
+      <Dialog open={fullEditorOpen} onOpenChange={setFullEditorOpen}>
+        <DialogContent className="max-w-md rounded-[28px] p-6" style={{ background: LH.background, maxHeight: "85vh", overflowY: "auto" }} dir="rtl">
+          <DialogHeader>
+            <DialogTitle style={{ color: LH.onSurface }}>עריכת כל פרטי השכר</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 mt-1">
+            <div className="flex flex-col gap-3">
+              {CORRECTABLE_PAYROLL_FIELDS.map((f) => (
+                <div key={f.id}>
+                  <label className="text-[11.5px] font-bold block mb-1" style={{ color: LH.onSurfaceVariant }}>
+                    {f.label} {f.kind === "rate" ? "(%)" : f.kind === "points" ? "(נקודות)" : "(₪)"}
+                  </label>
+                  <input
+                    type="number"
+                    value={fieldDrafts[f.id] ?? ""}
+                    onChange={(e) => setFieldDrafts((prev) => ({ ...prev, [f.id]: e.target.value }))}
+                    className="w-full h-11 rounded-2xl px-4 text-[15px] font-bold"
+                    style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="pt-2 flex flex-col gap-2" style={{ borderTop: "1px solid rgba(35,50,100,0.08)" }}>
+              <span className="text-[11.5px] font-bold" style={{ color: "#0F766E" }}>תוספות חד-פעמיות לחודש זה</span>
+              {extraAdditionsDraft.map((item, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={item.label}
+                    onChange={(e) => setExtraAdditionsDraft((prev) => prev.map((p, idx) => (idx === i ? { ...p, label: e.target.value } : p)))}
+                    placeholder="תיאור"
+                    className="flex-1 h-10 rounded-xl px-3 text-[13px]"
+                    style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
+                  />
+                  <input
+                    type="number"
+                    value={item.amount || ""}
+                    onChange={(e) => setExtraAdditionsDraft((prev) => prev.map((p, idx) => (idx === i ? { ...p, amount: parseFloat(e.target.value) || 0 } : p)))}
+                    placeholder="₪"
+                    className="w-20 h-10 rounded-xl px-2 text-[13px] font-bold text-center"
+                    style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
+                  />
+                  <button onClick={() => setExtraAdditionsDraft((prev) => prev.filter((_, idx) => idx !== i))} className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(220,38,38,0.08)", color: "#DC2626" }}>
+                    <span className="material-symbols-outlined text-[15px]">close</span>
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={() => setExtraAdditionsDraft((prev) => [...prev, { label: "", amount: 0 }])}
+                className="text-[12px] font-bold self-start"
+                style={{ color: "#0F766E" }}
+              >
+                + הוספת תוספת
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <span className="text-[11.5px] font-bold" style={{ color: "#DC2626" }}>ניכויים חד-פעמיים לחודש זה</span>
+              {extraDeductionsDraft.map((item, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={item.label}
+                    onChange={(e) => setExtraDeductionsDraft((prev) => prev.map((p, idx) => (idx === i ? { ...p, label: e.target.value } : p)))}
+                    placeholder="תיאור"
+                    className="flex-1 h-10 rounded-xl px-3 text-[13px]"
+                    style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
+                  />
+                  <input
+                    type="number"
+                    value={item.amount || ""}
+                    onChange={(e) => setExtraDeductionsDraft((prev) => prev.map((p, idx) => (idx === i ? { ...p, amount: parseFloat(e.target.value) || 0 } : p)))}
+                    placeholder="₪"
+                    className="w-20 h-10 rounded-xl px-2 text-[13px] font-bold text-center"
+                    style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
+                  />
+                  <button onClick={() => setExtraDeductionsDraft((prev) => prev.filter((_, idx) => idx !== i))} className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(220,38,38,0.08)", color: "#DC2626" }}>
+                    <span className="material-symbols-outlined text-[15px]">close</span>
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={() => setExtraDeductionsDraft((prev) => [...prev, { label: "", amount: 0 }])}
+                className="text-[12px] font-bold self-start"
+                style={{ color: "#DC2626" }}
+              >
+                + הוספת ניכוי
+              </button>
+            </div>
+
+            <p className="text-[10.5px]" style={{ color: LH.onSurfaceVariant }}>
+              התוספות/ניכויים החד-פעמיים תמיד שייכים רק לחודש הזה. שדות המס/ביטוח למעלה אפשר לשמור רק לחודש הזה, או לכל המשכורות הבאות.
+            </p>
+
+            <div className="flex gap-2">
+              <button onClick={saveFullEditorThisMonth} className="flex-1 h-11 rounded-2xl font-bold text-[12.5px]" style={{ background: "rgba(35,50,100,0.06)", color: LH.onSurface }}>
+                שמירה לחודש זה בלבד
+              </button>
+              <button onClick={saveFullEditorAllFutureMonths} className="flex-1 h-11 rounded-2xl font-bold text-white text-[12.5px]" style={{ background: "#0F766E" }}>
+                שמירת שדות המס מכאן ואילך
+              </button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
