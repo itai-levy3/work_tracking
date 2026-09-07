@@ -12,6 +12,7 @@ import {
   computeMonthlyPayroll,
   computeProjectedMonthlyPayroll,
   CORRECTABLE_PAYROLL_FIELDS,
+  deletePayrollActual,
   formatHM,
   getArchivedPdfForMonth,
   getPayrollActual,
@@ -231,6 +232,20 @@ export default function DesignPreviewReports() {
     setActualSaved(true);
   };
 
+  /** Undoes a mistaken entry — clears everything saved for this month (actual net, field
+   * overrides, extras) and reverts to the plain computed estimate. */
+  const clearActualNet = () => {
+    deletePayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
+    setActualNetInput("");
+    setDeviationReasonId(undefined);
+    setDeviationNote("");
+    setAiAnalysis(null);
+    setDetectedField(null);
+    setActualSaved(false);
+    setActualsVersion((v) => v + 1);
+    toast.success("הנתונים בפועל נמחקו — חזרנו לאומדן המחושב");
+  };
+
   const runAiAnalysis = async () => {
     if (!hasActualNet) return;
     setAiAnalysisLoading(true);
@@ -383,9 +398,11 @@ export default function DesignPreviewReports() {
               mixes actual to-date hours with FULL flat monthly additions/deductions, which looks
               badly wrong early in the month, so it's deliberately not used here. */}
           <div className="lh-rise py-8 flex flex-col items-center justify-center relative z-10">
-            <span className="text-[12px] font-bold tracking-[0.15em] mb-4 uppercase" style={{ color: LH.primary }}>{isCurrentMonth ? "נטו נכון להיום" : "משכורת נטו משוערת"}</span>
+            <span className="text-[12px] font-bold tracking-[0.15em] mb-4 uppercase" style={{ color: LH.primary }}>
+              {actualSaved && hasActualNet ? "נטו בפועל (מאושר)" : isCurrentMonth ? "נטו נכון להיום" : "משכורת נטו משוערת"}
+            </span>
             <h1 className="leading-none tracking-tighter tabular-nums" style={{ fontSize: 60, fontWeight: 800, color: LH.onSurface }}>
-              {money(currentToDatePayroll.netPay)}
+              {money(actualSaved && hasActualNet ? actualNetValue : currentToDatePayroll.netPay)}
             </h1>
             <div className="mt-6 flex items-center gap-2 px-4 py-1.5 rounded-full shadow-sm" style={{ background: LH.surfaceContainerHigh }}>
               <span className="material-symbols-outlined text-[16px]" style={{ color: LH.primary }}>schedule</span>
@@ -545,32 +562,62 @@ export default function DesignPreviewReports() {
                           </div>
                         </>
                       ) : (
-                        <p className="text-[12px]" style={{ color: LH.onSurfaceVariant }}>
-                          זה שדה שמוגדר כאחוז, ולא ניתן להציע ערך מדויק אוטומטית — כדאי לעדכן אותו ידנית בהגדרות → ניכויי חובה ופנסיה.
-                        </p>
+                        <>
+                          <p className="text-[12px] mb-3" style={{ color: LH.onSurfaceVariant }}>
+                            {detectedFieldMeta.kind === "gross"
+                              ? "זה שדה שקובע את הברוטו כולו (לא ניכוי ישיר), אז אי אפשר להציע ערך מדויק אוטומטית — אבל זו הסיבה הכי נפוצה לפער. פתחו את עורך פרטי השכר למטה כדי לתקן אותו."
+                              : "זה שדה שמוגדר כאחוז, ולא ניתן להציע ערך מדויק אוטומטית — כדאי לעדכן אותו ידנית בהגדרות → ניכויי חובה ופנסיה, או דרך עורך פרטי השכר למטה."}
+                          </p>
+                          <button onClick={openFullEditor} className="w-full h-10 rounded-xl text-[12px] font-bold text-white" style={{ background: "#0F766E" }}>
+                            פתיחת עורך פרטי השכר
+                          </button>
+                        </>
                       )}
                     </div>
                   )}
                 </div>
               )}
 
-              <button
-                onClick={() => { saveActualNet(); toast.success("נשמר"); }}
-                disabled={!hasActualNet}
-                className="w-full h-11 rounded-2xl font-bold mt-4 disabled:opacity-50"
-                style={{ background: actualSaved ? "rgba(15,118,110,0.1)" : `${LH.primary}0F`, color: actualSaved ? "#0F766E" : LH.primary }}
-              >
-                {actualSaved ? "נשמר ✓" : "שמירה"}
-              </button>
+              <div className="flex gap-2 mt-4">
+                <button
+                  onClick={() => { saveActualNet(); toast.success("נשמר"); }}
+                  disabled={!hasActualNet}
+                  className="flex-1 h-11 rounded-2xl font-bold disabled:opacity-50"
+                  style={{ background: actualSaved ? "rgba(15,118,110,0.1)" : `${LH.primary}0F`, color: actualSaved ? "#0F766E" : LH.primary }}
+                >
+                  {actualSaved ? "נשמר ✓" : "שמירה"}
+                </button>
+                {actualSaved && (
+                  <button
+                    onClick={clearActualNet}
+                    title="מחיקת הנתונים בפועל וחזרה לאומדן"
+                    className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0"
+                    style={{ background: "rgba(220,38,38,0.08)", color: "#DC2626" }}
+                  >
+                    <span className="material-symbols-outlined text-[19px]">restart_alt</span>
+                  </button>
+                )}
+              </div>
 
-              <button
-                onClick={openFullEditor}
-                className="w-full h-10 rounded-2xl font-bold mt-2 flex items-center justify-center gap-1.5 text-[12.5px]"
-                style={{ background: "transparent", color: LH.primary, border: `1px dashed ${LH.primary}55` }}
-              >
-                <span className="material-symbols-outlined text-[16px]">tune</span>
-                עריכת כל פרטי השכר (מס, ביטוח לאומי, בריאות, תוספות...)
-              </button>
+              {/* Only appears once a real actual-net figure has been entered — that's the moment
+                  editing the underlying breakdown becomes meaningful. */}
+              {hasActualNet && (
+                <button
+                  onClick={openFullEditor}
+                  className="w-full mt-3 rounded-2xl p-4 flex items-center gap-3 text-right relative overflow-hidden transition-transform active:scale-[0.98]"
+                  style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 14px 32px -10px rgba(118,57,255,0.45)" }}
+                >
+                  <div className="absolute -left-6 -bottom-8 w-28 h-28 rounded-full pointer-events-none" style={{ background: "rgba(255,255,255,0.14)", filter: "blur(18px)" }} />
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 relative z-10" style={{ background: "rgba(255,255,255,0.18)" }}>
+                    <span className="material-symbols-outlined text-white" style={{ fontSize: 20 }}>tune</span>
+                  </div>
+                  <div className="min-w-0 relative z-10">
+                    <span className="text-[13.5px] font-bold text-white block">עריכת כל פרטי השכר</span>
+                    <span className="text-[11px] font-medium block" style={{ color: "rgba(255,255,255,0.8)" }}>מס, ביטוח לאומי, בריאות, שכר שעתי, תוספות וניכויים חד-פעמיים</span>
+                  </div>
+                  <span className="material-symbols-outlined text-white relative z-10 shrink-0" style={{ fontSize: 20 }}>chevron_left</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -976,9 +1023,9 @@ export default function DesignPreviewReports() {
 
           <div className="flex flex-col gap-3 mt-2">
             <div className="rounded-[22px] p-5" style={{ background: "#0F766E" }}>
-              <span className="text-[11px] font-bold tracking-[0.1em] uppercase block mb-1" style={{ color: "rgba(255,255,255,0.65)" }}>נטו נכון להיום</span>
+              <span className="text-[11px] font-bold tracking-[0.1em] uppercase block mb-1" style={{ color: "rgba(255,255,255,0.65)" }}>{actualSaved && hasActualNet ? "נטו בפועל (מאושר)" : "נטו נכון להיום"}</span>
               <span dir="ltr" className="block tabular-nums leading-none" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.02em", color: "#fff" }}>
-                {money(currentToDatePayroll.netPay)}
+                {money(actualSaved && hasActualNet ? actualNetValue : currentToDatePayroll.netPay)}
               </span>
             </div>
 

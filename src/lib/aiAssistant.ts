@@ -108,10 +108,14 @@ export const analyzePayrollDeviation = async (params: {
   const { year, month, estimatedNet, actualNet, reasonLabel, note } = params;
   const diff = actualNet - estimatedNet;
   const fieldList = CORRECTABLE_PAYROLL_FIELDS.map((f) => `${f.id} (${f.label})`).join(", ");
+  const settings = getSettings();
   const question = `נתח פער בין המשכורת שהאפליקציה חישבה למשכורת שהתקבלה בפועל.
 השורה הראשונה בתשובה שלך חייבת להיות בדיוק בפורמט: שדה: <מזהה השדה מהרשימה, או none אם אין התאמה ברורה וחד-משמעית>
 לאחר מכן, משורה שנייה, הסבר קצר וממוקד בעברית (2-3 משפטים) למה כנראה נוצר הפער.
-בחר שדה רק אם התיאור של המשתמש מצביע עליו במפורש וללא ספק — אחרת יש להשיב none. רשימת השדות המותרים בלבד: ${fieldList}.
+בחר שדה אם התיאור של המשתמש מצביע עליו במפורש, או אם ניתן להסיק זאת בביטחון סביר מגודל וכיוון הפער — אחרת יש להשיב none.
+כלל אצבע חשוב: הסיבה הכי נפוצה לפער שאינו מוסבר על ידי ניכוי ספציפי שהמשתמש ציין היא שכר שעתי אפקטיבי שגוי (hourly_rate, או salary_cap_amount במצב תקרה) — אלה קובעים את הברוטו כולו, אז טעות שם משפיעה על כל המשכורת. אם אין רמז ברור לניכוי ספציפי, בדוק קודם אם hourly_rate/salary_cap_amount הגיוניים ביחס לפער, לפני שאתה מוותר ועונה none.
+רשימת השדות המותרים בלבד: ${fieldList}.
+נתוני שכר נוכחיים: מצב שכר=${settings.salary_mode ?? "hourly"}, שכר שעתי=₪${settings.hourly_rate ?? 0}${settings.salary_mode === "cap" ? `, תקרת שכר חודשית=₪${settings.salary_cap_amount ?? 0}` : ""}
 חודש: ${month + 1}/${year}
 נטו משוער במערכת: ₪${Math.round(estimatedNet)}
 נטו בפועל שהתקבל: ₪${Math.round(actualNet)}

@@ -285,6 +285,13 @@ export const pushPayrollActual = async (entry: PayrollActual): Promise<void> => 
   if (error) logSyncError("pushPayrollActual", error);
 };
 
+export const pushDeletePayrollActual = async (year: number, month: number): Promise<void> => {
+  const userId = await getUserId();
+  if (!userId) return;
+  const { error } = await supabase.from("payroll_actuals").delete().eq("user_id", userId).eq("year", year).eq("month", month);
+  if (error) logSyncError("pushDeletePayrollActual", error);
+};
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const fromDbPayrollActual = (row: any): PayrollActual => ({
   year: row.year,

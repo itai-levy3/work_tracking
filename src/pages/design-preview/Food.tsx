@@ -447,21 +447,41 @@ export default function DesignPreviewFood() {
                         <span dir="ltr" className="text-[13px] font-extrabold tabular-nums" style={{ color: grad[0] }}>{money(preset.amount)}</span>
                       </button>
                     ))}
+                    <button
+                      onClick={openAddPreset}
+                      className="food-btn shrink-0 flex flex-col items-center justify-center gap-0.5 rounded-2xl px-4 py-2.5"
+                      style={{ background: `linear-gradient(155deg, ${grad[0]}1A, ${grad[1]}1A)`, border: `1.5px dashed ${grad[0]}66` }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 20, color: grad[0] }}>add_circle</span>
+                      <span className="text-[10.5px] font-bold whitespace-nowrap" style={{ color: grad[0] }}>מקום חדש</span>
+                    </button>
                   </div>
                 </div>
               )}
 
               <button
                 onClick={() => setAddOpen(true)}
-                className="food-btn w-full h-12 rounded-2xl font-bold text-white flex items-center justify-center gap-2 mb-6"
+                className="food-btn w-full h-12 rounded-2xl font-bold text-white flex items-center justify-center gap-2 mb-3"
                 style={{ background: "linear-gradient(155deg,#F59E0B,#FB923C)", boxShadow: "0 14px 30px -10px rgba(245,158,11,0.5)" }}
               >
                 <span className="material-symbols-outlined text-[20px]">add_circle</span>
                 הוספת הוצאת אוכל
               </button>
               {(settings.food_presets || []).length === 0 && (
-                <button onClick={openAddPreset} className="text-[12px] font-bold -mt-4 mb-6 self-center" style={{ color: grad[0] }}>
-                  + הוספת מקום קבוע
+                <button
+                  onClick={openAddPreset}
+                  className="food-btn w-full rounded-2xl p-4 flex items-center gap-3 text-right mb-6 relative overflow-hidden"
+                  style={{ background: `linear-gradient(155deg, ${grad[0]}, ${grad[1]})`, boxShadow: `0 14px 30px -10px ${glow}` }}
+                >
+                  <div className="absolute -left-5 -bottom-6 w-24 h-24 rounded-full pointer-events-none" style={{ background: "rgba(255,255,255,0.16)", filter: "blur(16px)" }} />
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 relative z-10" style={{ background: "rgba(255,255,255,0.22)" }}>
+                    <span className="material-symbols-outlined text-white" style={{ fontSize: 22 }}>storefront</span>
+                  </div>
+                  <div className="min-w-0 relative z-10">
+                    <span className="text-[13.5px] font-bold text-white block">הוספת מקום קבוע</span>
+                    <span className="text-[11px] font-medium block" style={{ color: "rgba(255,255,255,0.85)" }}>שמרו מקום ומחיר — לחיצה אחת מתעדת ארוחה מיידית</span>
+                  </div>
+                  <span className="material-symbols-outlined text-white relative z-10 shrink-0" style={{ fontSize: 20 }}>chevron_left</span>
                 </button>
               )}
 

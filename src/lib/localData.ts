@@ -4,6 +4,7 @@ import {
   fetchPdfArchiveEntry,
   PulledData,
   pushDeleteFoodEntry,
+  pushDeletePayrollActual,
   pushDeleteWorkHour,
   pushDeleteWorkHoursRange,
   pushFoodEntry,
@@ -282,9 +283,15 @@ export const PAYROLL_DEVIATION_REASONS: PayrollDeviationReason[] = [
  * learn from the pattern. `aiAnalysis` holds the AI assistant's free-text read on `note`.
  */
 /** Settings fields the AI deviation analysis is allowed to point at and propose a corrected
- * value for — deliberately narrow (only numeric statutory-deduction inputs) so a misread of the
- * user's free text can never silently touch anything else. */
-export const CORRECTABLE_PAYROLL_FIELDS: { id: keyof UserSettings; label: string; kind: "amount" | "rate" | "points" }[] = [
+ * value for — deliberately narrow (only numeric payroll inputs) so a misread of the user's free
+ * text can never silently touch anything else. "gross" fields (hourly_rate/salary_cap_amount) feed
+ * gross pay itself, which then cascades through tax non-linearly — unlike "amount" fields they
+ * never get a deterministic auto-suggested value, only a flag that they're worth checking; in
+ * practice a wrong effective hourly rate/cap is the single most common cause of a deviation that
+ * isn't explained by a specific reported deduction, so these are checked first. */
+export const CORRECTABLE_PAYROLL_FIELDS: { id: keyof UserSettings; label: string; kind: "amount" | "rate" | "points" | "gross" }[] = [
+  { id: "hourly_rate", label: "שכר שעתי", kind: "gross" },
+  { id: "salary_cap_amount", label: "תקרת שכר חודשית", kind: "gross" },
   { id: "manual_income_tax", label: "מס הכנסה", kind: "amount" },
   { id: "manual_national_insurance", label: "ביטוח לאומי", kind: "amount" },
   { id: "manual_health_insurance", label: "ביטוח בריאות", kind: "amount" },
@@ -1448,6 +1455,15 @@ export const savePayrollActual = (entry: Omit<PayrollActual, "updatedAt">) => {
   data.payrollActuals = [...rest, full];
   writeData(data);
   void pushPayrollActual(full);
+};
+
+/** Clears a month's actual-net reconciliation entirely — reverts every figure for that month back
+ * to the plain computed estimate, for undoing a mistaken entry. */
+export const deletePayrollActual = (year: number, month: number) => {
+  const data = readData();
+  data.payrollActuals = (data.payrollActuals || []).filter((e) => !(e.year === year && e.month === month));
+  writeData(data);
+  void pushDeletePayrollActual(year, month);
 };
 
 export const exportLocalBackup = (): LocalBackupFile => {
