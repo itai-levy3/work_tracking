@@ -1,28 +1,44 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
-import { askAiAssistant } from "@/lib/aiAssistant";
+import { askAiAssistant, ChatTurn, extractProposedFix, ProposedFix } from "@/lib/aiAssistant";
 import {
+  applyPayrollFieldOverrides,
   computeCumulativeAccrued,
   computeCumulativeLeaveUsage,
   computeMonthlyPayroll,
   computeVacationMinimumStatus,
+  CORRECTABLE_PAYROLL_FIELDS,
   formatHM,
   getCountedHours,
   getEffectiveDailyTarget,
+  getPayrollActual,
   getProfileFirstName,
   getSettings,
   getWorkHoursForMonth,
+  savePayrollActual,
+  saveSettings,
   UserSettings,
 } from "@/lib/localData";
 import { LH } from "./tokens";
-import { LHHeader, LHBottomNav, globalStyle } from "./Shared";
+import { LHHeader, LHBottomNav, LHLoadingScreen, globalStyle } from "./Shared";
 
 interface Msg {
   id: number;
   from: "user" | "bot";
   text: string;
+  fix?: ProposedFix;
+  fixApplied?: boolean;
 }
+
+interface ChatSeed {
+  contextMonth?: { year: number; month: number };
+  history: ChatTurn[];
+  openingSummary: string;
+}
+
+const SEED_KEY = "worktrack_chat_seed";
 
 const quickQuestions: { text: string; icon: string }[] = [
   { text: "כמה ימי חופש נשארו לי?", icon: "beach_access" },
@@ -111,6 +127,12 @@ export default function DesignPreviewChat() {
   const [firstName, setFirstName] = useState("");
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Msg[]>([]);
+  // Conversation memory sent back to the AI on every turn so it keeps context across messages —
+  // critical for an investigation that spans several exchanges instead of one-shot Q&A.
+  const [history, setHistory] = useState<ChatTurn[]>([]);
+  // Set only when this chat was opened from a specific month's payroll-deviation investigation
+  // (via the reconciliation card's "המשך בצ׳אט" handoff) — a "scope: month" fix applies to this.
+  const [contextMonth, setContextMonth] = useState<{ year: number; month: number } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -130,15 +152,29 @@ export default function DesignPreviewChat() {
   }, [navigate]);
 
   useEffect(() => {
-    if (settings && messages.length === 0) {
-      setMessages([
-        {
-          id: 0,
-          from: "bot",
-          text: `היי ${firstName}! אני יודע לענות על שאלות ישירות על החופש, המחלה, השעות הנוספות והשכר שלך — ולכל שאלה אחרת יש לי גם חיבור למודל AI אמיתי.`,
-        },
-      ]);
+    if (!settings || messages.length > 0) return;
+    const rawSeed = sessionStorage.getItem(SEED_KEY);
+    if (rawSeed) {
+      sessionStorage.removeItem(SEED_KEY);
+      try {
+        const seed: ChatSeed = JSON.parse(rawSeed);
+        if (seed.contextMonth) setContextMonth(seed.contextMonth);
+        setHistory(seed.history || []);
+        setMessages([
+          { id: 0, from: "bot", text: `היי ${firstName}! ${seed.openingSummary}\nמה תרצה לבדוק עוד?` },
+        ]);
+        return;
+      } catch {
+        // Malformed seed — fall through to the plain greeting below.
+      }
     }
+    setMessages([
+      {
+        id: 0,
+        from: "bot",
+        text: `היי ${firstName}! אני יודע לענות על שאלות ישירות על החופש, המחלה, השעות הנוספות והשכר שלך — ולכל שאלה אחרת יש לי גם חיבור למודל AI אמיתי.`,
+      },
+    ]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings, firstName]);
 
@@ -152,7 +188,7 @@ export default function DesignPreviewChat() {
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
 
-    const localAnswer = answerQueryLocal(text, settings);
+    const localAnswer = history.length === 0 ? answerQueryLocal(text, settings) : null;
     if (localAnswer) {
       setMessages((prev) => [...prev, { id: Date.now() + 1, from: "bot", text: localAnswer }]);
       return;
@@ -161,20 +197,49 @@ export default function DesignPreviewChat() {
     const thinkingId = Date.now() + 1;
     setMessages((prev) => [...prev, { id: thinkingId, from: "bot", text: "חושב/ת..." }]);
     try {
-      const aiAnswer = await askAiAssistant(text);
-      setMessages((prev) => prev.map((m) => (m.id === thinkingId ? { ...m, text: aiAnswer } : m)));
+      const aiAnswer = await askAiAssistant(text, history, { allowedFields: CORRECTABLE_PAYROLL_FIELDS.map((f) => f.id), contextMonth });
+      const { text: cleanText, fix } = extractProposedFix(aiAnswer);
+      setHistory((prev) => [...prev, { role: "user", content: text }, { role: "assistant", content: aiAnswer }]);
+      setMessages((prev) => prev.map((m) => (m.id === thinkingId ? { ...m, text: cleanText, fix: fix ?? undefined } : m)));
     } catch (error) {
       const message = error instanceof Error ? error.message : "שגיאה בשירות ה-AI";
       setMessages((prev) => prev.map((m) => (m.id === thinkingId ? { ...m, text: message } : m)));
     }
   };
 
+  /** Applies a proposed fix ONLY on explicit user tap — the AI only ever proposes, never mutates
+   * anything on its own. "future" patches settings permanently; "month" patches just the specific
+   * month this conversation was opened from (falls back to today's month if opened cold). */
+  const applyFix = (msgId: number, fix: ProposedFix) => {
+    if (!settings) return;
+    if (fix.scope === "future") {
+      const next = applyPayrollFieldOverrides(settings, { [fix.field]: fix.value });
+      saveSettings(next);
+      setSettings(next);
+      toast.success(`${fix.label} עודכן לכל המשכורות מכאן ואילך`);
+    } else {
+      const target = contextMonth ?? { year: new Date().getFullYear(), month: new Date().getMonth() };
+      const existing = getPayrollActual(target.year, target.month);
+      const estimate = computeMonthlyPayroll(target.year, target.month, settings).netPay;
+      savePayrollActual({
+        year: target.year,
+        month: target.month,
+        actualNet: existing?.actualNet ?? estimate,
+        estimatedNet: existing?.estimatedNet ?? estimate,
+        reasonId: existing?.reasonId,
+        note: existing?.note,
+        aiAnalysis: existing?.aiAnalysis,
+        fieldOverrides: { ...(existing?.fieldOverrides || {}), [fix.field]: fix.value },
+        extraAdditions: existing?.extraAdditions,
+        extraDeductions: existing?.extraDeductions,
+      });
+      toast.success(`${fix.label} עודכן לחודש הנדון בלבד`);
+    }
+    setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, fixApplied: true } : m)));
+  };
+
   if (loading || !settings) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: LH.background }}>
-        <div className="w-12 h-12 rounded-full border-2 animate-spin" style={{ borderColor: `${LH.primary}33`, borderTopColor: LH.primary }} />
-      </div>
-    );
+    return <LHLoadingScreen />;
   }
 
   return (
@@ -258,15 +323,42 @@ export default function DesignPreviewChat() {
                     <span className="material-symbols-outlined text-white text-[14px]">smart_toy</span>
                   </div>
                 )}
-                <div
-                  className="max-w-[80%] px-4 py-3 rounded-2xl text-[14px] leading-relaxed"
-                  style={
-                    m.from === "user"
-                      ? { background: "linear-gradient(155deg,#7639FF,#00D2FF)", color: "#fff", borderBottomLeftRadius: 6, boxShadow: "0 10px 24px -10px rgba(118,57,255,0.5)" }
-                      : { background: "rgba(255,255,255,0.85)", backdropFilter: "blur(14px)", color: LH.onSurface, border: "1px solid rgba(118,57,255,0.12)", borderBottomRightRadius: 6, boxShadow: "0 8px 20px -8px rgba(35,50,100,0.1)" }
-                  }
-                >
-                  {m.text}
+                <div className="max-w-[80%] flex flex-col gap-2">
+                  <div
+                    className="px-4 py-3 rounded-2xl text-[14px] leading-relaxed whitespace-pre-line"
+                    style={
+                      m.from === "user"
+                        ? { background: "linear-gradient(155deg,#7639FF,#00D2FF)", color: "#fff", borderBottomLeftRadius: 6, boxShadow: "0 10px 24px -10px rgba(118,57,255,0.5)" }
+                        : { background: "rgba(255,255,255,0.85)", backdropFilter: "blur(14px)", color: LH.onSurface, border: "1px solid rgba(118,57,255,0.12)", borderBottomRightRadius: 6, boxShadow: "0 8px 20px -8px rgba(35,50,100,0.1)" }
+                    }
+                  >
+                    {m.text}
+                  </div>
+
+                  {/* A proposed fix is never applied automatically — this card is the only way it
+                      ever takes effect, and only on an explicit tap. */}
+                  {m.fix && (
+                    <div className="rounded-2xl p-4" style={{ background: "rgba(15,118,110,0.07)", border: "1px solid rgba(15,118,110,0.22)" }}>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <span className="material-symbols-outlined text-[16px]" style={{ color: "#0F766E" }}>build</span>
+                        <span className="text-[12px] font-bold" style={{ color: "#0F766E" }}>
+                          תיקון מוצע: {m.fix.label} ל-{m.fix.value}
+                        </span>
+                      </div>
+                      <span className="text-[11px] block mb-3" style={{ color: LH.onSurfaceVariant }}>
+                        {m.fix.scope === "future" ? "יעודכן לכל המשכורות מכאן ואילך" : "יעודכן רק לחודש הנדון בשיחה"}
+                      </span>
+                      {m.fixApplied ? (
+                        <span className="text-[12px] font-bold flex items-center gap-1" style={{ color: "#0F766E" }}>
+                          <span className="material-symbols-outlined text-[16px]">check_circle</span> הופעל
+                        </span>
+                      ) : (
+                        <button onClick={() => applyFix(m.id, m.fix!)} className="w-full h-10 rounded-xl text-[12.5px] font-bold text-white" style={{ background: "#0F766E" }}>
+                          אישור והפעלת התיקון
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

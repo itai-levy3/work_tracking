@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { analyzePayrollDeviation } from "@/lib/aiAssistant";
+import { analyzePayrollDeviation, ChatTurn } from "@/lib/aiAssistant";
 import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import {
   applyPayrollExtras,
@@ -47,6 +47,12 @@ export default function DesignPreviewReports() {
   const [aiAnalysisLoading, setAiAnalysisLoading] = useState(false);
   const [actualSaved, setActualSaved] = useState(false);
   const [detectedField, setDetectedField] = useState<string | null>(null);
+  const [isDeviationRecurring, setIsDeviationRecurring] = useState(false);
+  const [aiHistory, setAiHistory] = useState<ChatTurn[]>([]);
+  // A >50₪ deviation triggers the deep investigation automatically — this just guards against
+  // re-firing it on every render for the same (month, deviation) once it's already run or the
+  // user dismissed/edited it away.
+  const [autoAnalyzedKey, setAutoAnalyzedKey] = useState<string | null>(null);
 
   // Full manual editor — every correctable field at once, plus one-off extra line items for this
   // month specifically (a bonus, a one-time deduction the estimate missed).
@@ -261,11 +267,41 @@ export default function DesignPreviewReports() {
       });
       setAiAnalysis(result.explanation);
       setDetectedField(result.field);
+      setIsDeviationRecurring(result.isRecurring);
+      setAiHistory(result.history);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "שגיאה בניתוח");
     } finally {
       setAiAnalysisLoading(false);
     }
+  };
+
+  /** A deviation over ±50₪ is never left as a silent number — this fires the same deep analysis
+   * automatically (no need to also pick a reason and tap "נתח") the moment it's typed in, keyed so
+   * it only runs once per (month, entered amount) instead of on every keystroke/render. */
+  const maybeAutoAnalyze = () => {
+    if (!hasActualNet || aiAnalysisLoading) return;
+    if (Math.abs(deviation) <= 50) return;
+    const key = `${currentMonth.getFullYear()}-${currentMonth.getMonth()}-${Math.round(actualNetValue)}`;
+    if (autoAnalyzedKey === key) return;
+    setAutoAnalyzedKey(key);
+    void runAiAnalysis();
+  };
+
+  /** Hands the whole investigation off to the free-form AI chat — same conversation history, same
+   * month context — so the user can keep digging, and (if a more serious/systemic bug turns up)
+   * the chat can propose a fix for this or other months via a one-tap confirmation card. */
+  const continueInChat = () => {
+    const reasonLabel = deviationReasonOptions.find((r) => r.id === deviationReasonId)?.label;
+    sessionStorage.setItem(
+      "worktrack_chat_seed",
+      JSON.stringify({
+        contextMonth: { year: currentMonth.getFullYear(), month: currentMonth.getMonth() },
+        history: aiHistory,
+        openingSummary: `ממשיך לחקור את הפער בשכר של ${MONTH_HE[currentMonth.getMonth()]} ${currentMonth.getFullYear()}: משוער ₪${Math.round(payroll.netPay)}, בפועל ₪${Math.round(actualNetValue)}, הפרש ${deviation >= 0 ? "+" : ""}₪${Math.round(deviation)}.${reasonLabel ? ` סיבה שנבחרה: ${reasonLabel}.` : ""}${isDeviationRecurring ? " שים לב: פער דומה חוזר גם בחודשים קודמים." : ""}`,
+      }),
+    );
+    navigate("/design-preview/chat");
   };
 
   const applyFixThisMonthOnly = () => {
@@ -467,6 +503,7 @@ export default function DesignPreviewReports() {
                   type="number"
                   value={actualNetInput}
                   onChange={(e) => { setActualNetInput(e.target.value); setActualSaved(false); }}
+                  onBlur={maybeAutoAnalyze}
                   placeholder="0"
                   className="flex-1 h-12 rounded-2xl px-4 text-[18px] font-bold"
                   style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
@@ -532,10 +569,24 @@ export default function DesignPreviewReports() {
                     {aiAnalysisLoading ? "מנתח..." : "נתח עם AI"}
                   </button>
 
+                  {Math.abs(deviation) > 50 && !aiAnalysis && !aiAnalysisLoading && (
+                    <div className="flex items-center gap-2 rounded-2xl px-4 py-2.5" style={{ background: "rgba(220,38,38,0.08)" }}>
+                      <span className="material-symbols-outlined text-[16px]" style={{ color: "#DC2626" }}>error</span>
+                      <span className="text-[11.5px] font-bold" style={{ color: "#DC2626" }}>הפרש מעל 50 ₪ — פתחו חקירה עם AI כדי להבין למה, לא רק לרשום את זה.</span>
+                    </div>
+                  )}
+
+                  {isDeviationRecurring && (
+                    <div className="flex items-center gap-2 rounded-2xl px-4 py-3" style={{ background: "rgba(217,119,6,0.1)", border: "1px solid rgba(217,119,6,0.25)" }}>
+                      <span className="material-symbols-outlined text-[18px]" style={{ color: "#B45309" }}>history</span>
+                      <span className="text-[12px] font-bold" style={{ color: "#B45309" }}>פער דומה חוזר גם בחודשים קודמים — זה כנראה הגדרה קבועה שגויה, לא טעות חד-פעמית.</span>
+                    </div>
+                  )}
+
                   {aiAnalysis && (
                     <div className="rounded-2xl px-4 py-3" style={{ background: `${LH.primary}0A` }}>
                       <span className="text-[10.5px] font-bold tracking-[0.08em] uppercase block mb-1.5" style={{ color: LH.primary }}>ניתוח ה-AI</span>
-                      <p className="text-[12.5px] leading-relaxed" style={{ color: LH.onSurface }}>{aiAnalysis}</p>
+                      <p className="text-[12.5px] leading-relaxed whitespace-pre-line" style={{ color: LH.onSurface }}>{aiAnalysis}</p>
                     </div>
                   )}
 
@@ -575,12 +626,29 @@ export default function DesignPreviewReports() {
                       )}
                     </div>
                   )}
+
+                  {aiAnalysis && (
+                    <button
+                      onClick={continueInChat}
+                      className="w-full rounded-2xl p-4 flex items-center gap-3 text-right relative overflow-hidden transition-transform active:scale-[0.98]"
+                      style={{ background: "linear-gradient(155deg,#101A46,#3B4FA0)", boxShadow: "0 14px 32px -10px rgba(16,26,70,0.4)" }}
+                    >
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.14)" }}>
+                        <span className="material-symbols-outlined text-white" style={{ fontSize: 20 }}>forum</span>
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[13.5px] font-bold text-white block">המשך בצ׳אט חופשי</span>
+                        <span className="text-[11px] font-medium block" style={{ color: "rgba(255,255,255,0.75)" }}>אותה חקירה, אפשר לשאול עוד — כולל תיקונים לחודשים אחרים אם יש באג רציני</span>
+                      </div>
+                      <span className="material-symbols-outlined text-white shrink-0" style={{ fontSize: 20 }}>chevron_left</span>
+                    </button>
+                  )}
                 </div>
               )}
 
               <div className="flex gap-2 mt-4">
                 <button
-                  onClick={() => { saveActualNet(); toast.success("נשמר"); }}
+                  onClick={() => { saveActualNet(); maybeAutoAnalyze(); toast.success("נשמר"); }}
                   disabled={!hasActualNet}
                   className="flex-1 h-11 rounded-2xl font-bold disabled:opacity-50"
                   style={{ background: actualSaved ? "rgba(15,118,110,0.1)" : `${LH.primary}0F`, color: actualSaved ? "#0F766E" : LH.primary }}
