@@ -10,6 +10,7 @@ import {
   computeVacationMinimumStatus,
   DayStatus,
   formatHM,
+  fractionMultiplier,
   getCountedHours,
   getEffectiveDailyTarget,
   getMilestoneMessageForToday,
@@ -178,10 +179,12 @@ export default function DesignPreview() {
   }, [settings, currentMonth]);
 
   // ---- Monthly pace: hours deficit/overtime tracked per WORKED day only, summed (never netted
-  // against each other). Vacation/sick/holiday/off days already move salary through payroll — they
-  // are not "missing hours" and must not touch this tracker at all. A day that's still open (clocked
+  // against each other). Vacation/sick/off days already move salary through payroll — they are
+  // not "missing hours" and must not touch this tracker at all. A day that's still open (clocked
   // in, not yet clocked out) hasn't been judged short yet either — it waits for clock-out (or an
-  // explicit day-off entry) before counting against the deficit, so mid-shift never inflates it. ----
+  // explicit day-off entry) before counting against the deficit, so mid-shift never inflates it.
+  // A חג (holiday) day counts exactly like a regular worked day that hit its target dead-on — it's
+  // always paid in full for its own fraction, so it's neither a deficit nor an overtime source. ----
   const dailyPace = useMemo(() => {
     if (!settings) return { workedSum: 0, targetSum: 0, deficitHours: 0, overtimeHours: 0 };
     const y = currentMonth.getFullYear();
@@ -200,10 +203,17 @@ export default function DesignPreview() {
       // work days yet, so they must never inflate the month's deficit target.
       if (settings.employment_start_date && ds < settings.employment_start_date) continue;
       const entryForDay = workHours.find((w) => w.date === ds);
-      if (entryForDay?.status && entryForDay.status !== "worked") continue;
+      const status = entryForDay?.status;
+      if (status && status !== "worked" && status !== "holiday") continue;
       const isToday = isCurrentRealMonth && d === realToday.getDate();
       if (isToday && isClockedIn) continue;
       const target = getEffectiveDailyTarget(ds, entryForDay, settings);
+      if (status === "holiday") {
+        const credited = target * fractionMultiplier(entryForDay?.fraction);
+        targetSum += credited;
+        workedSum += credited;
+        continue;
+      }
       const worked = entryForDay ? getCountedHours(entryForDay) : 0;
       targetSum += target;
       workedSum += worked;
@@ -728,7 +738,23 @@ export default function DesignPreview() {
 
               {[
                 { icon: "speed", label: "קצב השלמה", sub: "מהיעד החודשי", value: `${Math.round(percentage)}%`, grad: ["#7639FF", "#00D2FF"], glow: "rgba(118,57,255,0.55)", trackTint: "rgba(118,57,255,0.12)", percent: percentage, size: 124, lift: 0, zIndex: 10, overlap: 0, badge: 23 },
-                { icon: "hourglass_bottom", label: monthRemaining > 0 ? "בחוסר החודש" : monthOvertime > 0 ? "בעודף החודש" : "בחוסר החודש", sub: "לעומת הקצב הצפוי", value: monthRemaining > 0 ? formatHM(monthRemaining) : monthOvertime > 0 ? `+${formatHM(monthOvertime)}` : formatHM(0), grad: ["#0F766E", "#19CEA0"], glow: "rgba(15,118,110,0.55)", trackTint: "rgba(15,118,110,0.14)", percent: monthPacePercent, size: 80, lift: 12, zIndex: 20, overlap: -19, badge: 18 },
+                {
+                  icon: "hourglass_bottom",
+                  label: monthRemaining > 0 ? "בחוסר החודש" : monthOvertime > 0 ? "בעודף החודש" : "בחוסר החודש",
+                  sub: "לעומת הקצב הצפוי",
+                  value: monthRemaining > 0 ? formatHM(monthRemaining) : monthOvertime > 0 ? `+${formatHM(monthOvertime)}` : formatHM(0),
+                  // Red the moment there's a real deficit — a surplus (or dead-even) stays the
+                  // usual teal, so the color itself tells you which side you're on at a glance.
+                  grad: monthRemaining > 0 ? ["#DC2626", "#F87171"] : ["#0F766E", "#19CEA0"],
+                  glow: monthRemaining > 0 ? "rgba(220,38,38,0.55)" : "rgba(15,118,110,0.55)",
+                  trackTint: monthRemaining > 0 ? "rgba(220,38,38,0.14)" : "rgba(15,118,110,0.14)",
+                  percent: monthPacePercent,
+                  size: 80,
+                  lift: 12,
+                  zIndex: 20,
+                  overlap: -19,
+                  badge: 18,
+                },
                 { icon: "event_available", label: "ימי עבודה", sub: "החודש", value: String(monthWorkDaysCount), grad: ["#00D2FF", "#7FEFFF"], glow: "rgba(0,210,255,0.55)", trackTint: "rgba(0,210,255,0.12)", percent: monthScheduledWorkDaysSoFar > 0 ? Math.min(100, (monthWorkDaysCount / monthScheduledWorkDaysSoFar) * 100) : 0, size: 66, lift: 21, zIndex: 30, overlap: -15, badge: 16 },
                 { icon: "flag", label: "יעד חודשי", sub: `${formatHM(monthlyGoal)} שעות`, value: String(Math.round(monthlyGoal)), grad: ["#7639FF", "#B39CFF"], glow: "rgba(118,57,255,0.55)", trackTint: "rgba(118,57,255,0.12)", percent: 100, size: 56, lift: 29, zIndex: 40, overlap: -14, badge: 14 },
               ].map((k, i) => {

@@ -736,17 +736,16 @@ export const getCountedHours = (entry: WorkHour | undefined): number => {
  *  - status entries of that type (weighted by their fraction: full/3-4/half), regardless of paid/unpaid, and
  *  - "worked" days whose shortfall was explicitly marked as covered by that leave type.
  *
- * A day scheduled in a month that hasn't started yet (e.g. it's August and vacation is booked
- * for October) is NOT deducted from the balance yet — it only counts once that month begins,
- * matching a real payslip which only reflects the current and past months.
+ * A day scheduled for the future (e.g. it's the 15th and vacation is booked for the 25th) is NOT
+ * deducted from the balance yet — it only counts once that specific day actually arrives, so the
+ * balance right now always reflects only what's genuinely been used so far.
  */
 export const computeLeaveUsage = (year: number, type: "vacation" | "sick", settings: UserSettings, asOfDate: Date = new Date()): number => {
   const entries = getWorkHoursForYear(year);
-  const asOfYearMonth = asOfDate.getFullYear() * 12 + asOfDate.getMonth();
+  const asOfDateKey = `${asOfDate.getFullYear()}-${String(asOfDate.getMonth() + 1).padStart(2, "0")}-${String(asOfDate.getDate()).padStart(2, "0")}`;
   let used = 0;
   for (const w of entries) {
-    const entryDate = new Date(`${w.date}T00:00:00`);
-    if (entryDate.getFullYear() * 12 + entryDate.getMonth() > asOfYearMonth) continue;
+    if (w.date > asOfDateKey) continue;
     if (w.status === type) {
       used += fractionMultiplier(w.fraction);
     } else if (type === "vacation" && w.status === "holiday" && w.remainderPaid !== false) {
