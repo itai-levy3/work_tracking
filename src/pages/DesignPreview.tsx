@@ -1098,6 +1098,11 @@ export default function DesignPreview() {
                 const target = getEffectiveDailyTarget(entry.date, entry, settings);
                 const worked = getCountedHours(entry);
                 const diff = worked - target;
+                // A shift that's still open (clocked in, not yet out) hasn't been judged short or
+                // long yet — getCountedHours deliberately returns 0 for the running segment, so
+                // showing "חוסר" against the FULL daily target here would flag every single open
+                // shift as maximally short the instant it starts, which is exactly backwards.
+                const isInProgress = (entry.status === "worked" || !entry.status) && !!entry.start_time && !entry.end_time;
                 return (
                   <div
                     key={entry.date}
@@ -1129,12 +1134,17 @@ export default function DesignPreview() {
                               : `${entry.start_time || "--:--"} - ${entry.end_time || "--:--"}`}
                           </span>
                         )}
-                        {!isOff && diff > 0.01 && (
+                        {!isOff && isInProgress && (
+                          <span className="text-[11px] font-bold px-2 py-0.5 rounded mt-0.5" style={{ color: "#7639FF", background: "rgba(118,57,255,0.06)" }}>
+                            במהלך המשמרת
+                          </span>
+                        )}
+                        {!isOff && !isInProgress && diff > 0.01 && (
                           <span className="text-[11px] font-bold px-2 py-0.5 rounded mt-0.5" style={{ color: "#003DAA", background: "rgba(0,61,170,0.05)" }}>
                             <span dir="ltr">{formatHM(diff)}+</span> עודף
                           </span>
                         )}
-                        {!isOff && diff < -0.01 && !entry.deficitCoveredBy && (
+                        {!isOff && !isInProgress && diff < -0.01 && !entry.deficitCoveredBy && (
                           <span className="text-[11px] font-bold px-2 py-0.5 rounded mt-0.5" style={{ color: "#ba1a1a", background: "rgba(186,26,26,0.05)" }}>
                             <span dir="ltr">{formatHM(-diff)}-</span> חוסר
                           </span>
