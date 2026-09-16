@@ -223,8 +223,16 @@ export default function DesignPreview() {
     }
     return { workedSum, targetSum, deficitHours, overtimeHours };
   }, [settings, currentMonth, workHours, isClockedIn]);
+  // Raw per-day sums — kept separate and untouched by the net below, since actual overtime PAY
+  // (computeMonthlyPayroll, elsewhere) is always based on this real accrued total regardless of
+  // how the pace circle nets out. E.g. 6 days +3min each (=+18min) then one day -5min still pays
+  // the full 18 minutes of overtime — it just nets to +13 in the pace circle below.
   const monthOvertime = dailyPace.overtimeHours;
   const monthRemaining = dailyPace.deficitHours;
+  // The pace circle itself shows the NET of the two — how many minutes you're ahead or behind
+  // overall, in one number — not the raw deficit alone. Green/ahead when overtime outweighs
+  // shortfall, red/behind when shortfall outweighs overtime.
+  const netPaceHours = monthOvertime - monthRemaining;
   const monthPacePercent = dailyPace.targetSum > 0 ? Math.min(100, (dailyPace.workedSum / dailyPace.targetSum) * 100) : dailyPace.workedSum > 0 ? 100 : 0;
 
   // Visible proof that deferred-overtime hours are actually being tracked while they accrue,
@@ -740,14 +748,14 @@ export default function DesignPreview() {
                 { icon: "speed", label: "קצב השלמה", sub: "מהיעד החודשי", value: `${Math.round(percentage)}%`, grad: ["#7639FF", "#00D2FF"], glow: "rgba(118,57,255,0.55)", trackTint: "rgba(118,57,255,0.12)", percent: percentage, size: 124, lift: 0, zIndex: 10, overlap: 0, badge: 23 },
                 {
                   icon: "hourglass_bottom",
-                  label: monthRemaining > 0 ? "בחוסר החודש" : monthOvertime > 0 ? "בעודף החודש" : "בחוסר החודש",
+                  label: netPaceHours < 0 ? "בחוסר החודש" : "בעודף החודש",
                   sub: "לעומת הקצב הצפוי",
-                  value: monthRemaining > 0 ? formatHM(monthRemaining) : monthOvertime > 0 ? `+${formatHM(monthOvertime)}` : formatHM(0),
-                  // Red the moment there's a real deficit — a surplus (or dead-even) stays the
-                  // usual teal, so the color itself tells you which side you're on at a glance.
-                  grad: monthRemaining > 0 ? ["#DC2626", "#F87171"] : ["#0F766E", "#19CEA0"],
-                  glow: monthRemaining > 0 ? "rgba(220,38,38,0.55)" : "rgba(15,118,110,0.55)",
-                  trackTint: monthRemaining > 0 ? "rgba(220,38,38,0.14)" : "rgba(15,118,110,0.14)",
+                  value: netPaceHours < 0 ? formatHM(-netPaceHours) : `+${formatHM(netPaceHours)}`,
+                  // One net number, not the raw deficit alone — red only when the net across the
+                  // whole month is actually negative (shortfall days outweigh overtime days).
+                  grad: netPaceHours < 0 ? ["#DC2626", "#F87171"] : ["#0F766E", "#19CEA0"],
+                  glow: netPaceHours < 0 ? "rgba(220,38,38,0.55)" : "rgba(15,118,110,0.55)",
+                  trackTint: netPaceHours < 0 ? "rgba(220,38,38,0.14)" : "rgba(15,118,110,0.14)",
                   percent: monthPacePercent,
                   size: 80,
                   lift: 12,
