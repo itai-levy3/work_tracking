@@ -131,6 +131,10 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmDeleteSegment, setConfirmDeleteSegment] = useState<number | null>(null);
   const [displayedHours, setDisplayedHours] = useState(0);
+  // A non-worked day (vacation/sick/holiday/off) can also have a genuinely worked portion — e.g.
+  // worked the morning, then left for a half-day vacation. Off by default; turns on automatically
+  // when re-opening a day that was already saved with both a status and real times.
+  const [splitWorked, setSplitWorked] = useState(false);
 
   useEffect(() => {
     if (!date) return;
@@ -145,6 +149,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
     setEditing(!hasData);
     setConfirmDelete(false);
     setConfirmDeleteSegment(null);
+    setSplitWorked(!!entry && !!entry.status && entry.status !== "worked" && !!entry.start_time && !!entry.end_time);
   }, [date, entry]);
 
   // Counts the orb's hero number up from 0 to its real value on open, for a livelier reveal.
@@ -204,9 +209,21 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
     if (OFF_LIKE_STATUSES.includes((merged.status || "worked") as DayStatus)) {
       // "holiday" is always paid in full; "off" is always unpaid; vacation/sick keep the user's toggle.
       merged.paid = merged.status === "holiday" ? true : merged.status === "off" ? false : merged.paid !== false;
-      merged.hours_worked = merged.paid ? target * fractionMultiplier(merged.fraction) : 0;
-      merged.start_time = null;
-      merged.end_time = null;
+      // A day can be part genuinely worked (real clock-in/out, entered manually here) and part
+      // leave — e.g. worked the morning, then left for a half-day vacation. The worked portion is
+      // always paid regardless of the leave portion's paid-ness (same rule as the live "sign off
+      // from now" flow), and its real times are kept on the record instead of being discarded.
+      const workedPortionHours = splitWorked && draft.start_time && draft.end_time ? calcHours(draft.start_time, draft.end_time) : 0;
+      const leaveOwnPaidPortion = merged.status === "holiday" && merged.fraction !== "full" && merged.remainderPaid === false
+        ? fractionMultiplier(merged.fraction)
+        : merged.paid
+          ? fractionMultiplier(merged.fraction)
+          : 0;
+      merged.hours_worked = workedPortionHours + target * leaveOwnPaidPortion;
+      if (!(splitWorked && draft.start_time && draft.end_time)) {
+        merged.start_time = null;
+        merged.end_time = null;
+      }
       merged.segments = undefined;
       merged.deficitCoveredBy = undefined;
     } else if (merged.segments && merged.segments.length > 1) {
@@ -438,8 +455,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
               </div>
 
               <div className="ddm-pill-in flex flex-col items-center gap-2">
-                {status === "worked" &&
-                  draft.start_time &&
+                {draft.start_time &&
                   (draft.segments && draft.segments.length > 1
                     ? draft.segments.map((seg, i) => (
                         <div
@@ -723,7 +739,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
               ) : (
                 <div className="relative z-10 flex flex-col gap-4">
                   <div>
-                    <label className="text-[11px] font-bold block mb-1" style={{ color: "#46464f" }}>חלקיות</label>
+                    <label className="text-[11px] font-bold block mb-1" style={{ color: "#46464f" }}>{splitWorked ? `חלקיות ${meta.label}` : "חלקיות"}</label>
                     <div className="flex gap-2">
                       {(["full", "three_quarters", "half", "quarter"] as DayFraction[]).map((f) => (
                         <button
@@ -745,6 +761,35 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                       <span className="text-[13px] font-medium" style={{ color: "#101A46" }}>{draft.paid !== false ? "משולם" : "לא משולם"}</span>
                       <input type="checkbox" checked={draft.paid !== false} onChange={(e) => setDraft((d) => ({ ...d, paid: e.target.checked }))} className="w-5 h-5 accent-[#16A34A]" />
                     </label>
+                  )}
+
+                  {/* Two events, one day: the חלקיות above is only the leave portion — this covers
+                      a real worked stretch on the same day (e.g. worked the morning, left for a
+                      half-day vacation) without losing either the real clock times or the leave. */}
+                  <label className="flex items-center justify-between gap-2 p-3 rounded-xl" style={{ background: splitWorked ? "rgba(118,57,255,0.06)" : "rgba(35,50,100,0.04)" }}>
+                    <span className="text-[13px] font-medium flex items-center gap-1.5" style={{ color: "#101A46" }}>
+                      <span className="material-symbols-outlined text-[16px]" style={{ color: "#7639FF" }}>event_repeat</span>
+                      עבדתי גם חלק מהיום
+                    </span>
+                    <input type="checkbox" checked={splitWorked} onChange={(e) => setSplitWorked(e.target.checked)} className="w-5 h-5 accent-[#7639FF]" />
+                  </label>
+                  {splitWorked && (
+                    <div className="flex items-center gap-2">
+                      <div className="ddm-field flex-1 rounded-2xl px-3 py-2" style={{ background: "#fff", border: "1px solid #e4e1e6", boxShadow: "0 2px 8px rgba(35,50,100,0.03)" }}>
+                        <label className="text-[10px] font-bold flex items-center gap-1 mb-0.5" style={{ color: "#8892b0" }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 13 }}>login</span>
+                          כניסה
+                        </label>
+                        <input type="time" value={draft.start_time || ""} onChange={(e) => setDraft((d) => ({ ...d, start_time: e.target.value }))} className="w-full text-[15px] font-bold bg-transparent outline-none" style={{ color: "#101A46" }} />
+                      </div>
+                      <div className="ddm-field flex-1 rounded-2xl px-3 py-2" style={{ background: "#fff", border: "1px solid #e4e1e6", boxShadow: "0 2px 8px rgba(35,50,100,0.03)" }}>
+                        <label className="text-[10px] font-bold flex items-center gap-1 mb-0.5" style={{ color: "#8892b0" }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 13 }}>logout</span>
+                          יציאה
+                        </label>
+                        <input type="time" value={draft.end_time || ""} onChange={(e) => setDraft((d) => ({ ...d, end_time: e.target.value }))} className="w-full text-[15px] font-bold bg-transparent outline-none" style={{ color: "#101A46" }} />
+                      </div>
+                    </div>
                   )}
                   {status === "holiday" && (
                     <p className="text-[11px] px-3 py-2.5 rounded-xl" style={{ color: meta.grad[0], background: meta.tint }}>

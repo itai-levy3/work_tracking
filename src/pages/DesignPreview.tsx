@@ -741,7 +741,7 @@ export default function DesignPreview() {
                 { top: "70%", left: "92%", d: "2.1s", s: 5 },
                 { top: "40%", left: "50%", d: "1s", s: 3 },
               ].map((sp, si) => (
-                <div key={si} className="kpi-sparkle absolute rounded-full pointer-events-none" style={{ top: sp.top, left: sp.left, width: sp.s, height: sp.s, background: "white", boxShadow: "0 0 6px 2px rgba(118,57,255,0.5)", animationDelay: sp.d }} />
+                <div key={si} className="kpi-sparkle absolute rounded-full pointer-events-none" style={{ top: sp.top, left: sp.left, width: sp.s, height: sp.s, background: "white", boxShadow: "0 0 6px 2px rgba(118,57,255,0.5)", animationDelay: sp.d, zIndex: 50 }} />
               ))}
 
               {[

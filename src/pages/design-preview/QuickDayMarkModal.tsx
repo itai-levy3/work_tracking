@@ -229,7 +229,7 @@ export function QuickDayMarkModal({ open, kind, date, existingEntry, isClockedIn
         <RxDialog.Content className="fixed inset-0 z-50 flex items-center justify-center outline-none px-6">
           <div className="qdm-card w-full max-w-[380px] rounded-[32px] p-7 flex flex-col gap-5 relative overflow-hidden" style={cardBase}>
             <RxDialog.Title className="sr-only">{KIND_TITLE[kind]}</RxDialog.Title>
-            <RxDialog.Close className="absolute top-5 left-5 w-8 h-8 rounded-full flex items-center justify-center z-10" style={{ background: "rgba(35,50,100,0.08)", color: "#8892b0" }}>
+            <RxDialog.Close className="absolute top-5 right-5 w-8 h-8 rounded-full flex items-center justify-center z-10" style={{ background: "rgba(35,50,100,0.08)", color: "#8892b0" }}>
               <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
             </RxDialog.Close>
 
