@@ -70,6 +70,12 @@ export interface WorkHour {
    * from salary, same as any other unpaid leave.
    */
   remainderPaid?: boolean;
+  /**
+   * Set only by the "עבדתי גם חלק מהיום" split-day flow: the leave portion's exact hour count
+   * (e.g. 2.5), overriding `fraction` for every balance/reporting calculation via
+   * effectiveDayFraction — precise instead of snapped to one of the 4 fraction presets.
+   */
+  leaveHours?: number;
   /** Marks this specific "worked" day as an evening shift — its target comes from evening_shift_hours. */
   evening?: boolean;
   /** A free-text note/event left on this day (e.g. "יציאה מוקדמת ב-15:30"), settable in advance via Schedule. */
@@ -105,6 +111,19 @@ export const fractionMultiplier = (fraction: DayFraction | undefined): number =>
     default:
       return 1;
   }
+};
+
+/**
+ * The fraction of a full day a leave entry's `fraction` field represents — EXCEPT when the entry
+ * was created via the "עבדתי גם חלק מהיום" split-day flow, which records the leave portion as a
+ * precise hour count (`leaveHours`, e.g. 2.5h) instead of one of the 4 coarse presets. Every place
+ * that turns a leave entry into a day-fraction (balance usage, holidayDays/unpaidLeaveDays/
+ * unpaidOffDays reporting) goes through this instead of calling fractionMultiplier directly, so a
+ * split day's exact hours are respected everywhere consistently.
+ */
+export const effectiveDayFraction = (w: { fraction?: DayFraction; leaveHours?: number }, target: number): number => {
+  if (w.leaveHours !== undefined && target > 0) return Math.min(1, Math.max(0, w.leaveHours / target));
+  return fractionMultiplier(w.fraction);
 };
 
 export type AccrualMethod = "lump_sum" | "monthly";
@@ -747,9 +766,9 @@ export const computeLeaveUsage = (year: number, type: "vacation" | "sick", setti
   for (const w of entries) {
     if (w.date > asOfDateKey) continue;
     if (w.status === type) {
-      used += fractionMultiplier(w.fraction);
+      used += effectiveDayFraction(w, getEffectiveDailyTarget(w.date, w, settings));
     } else if (type === "vacation" && w.status === "holiday" && w.remainderPaid !== false) {
-      used += 1 - fractionMultiplier(w.fraction);
+      used += 1 - effectiveDayFraction(w, getEffectiveDailyTarget(w.date, w, settings));
     } else if ((w.status === "worked" || !w.status) && w.deficitCoveredBy === type) {
       const target = getEffectiveDailyTarget(w.date, w, settings);
       if (target > 0) {
@@ -1038,20 +1057,21 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
         regularHours += hours;
         regularPay += hours * baseRate;
       }
+      const offTarget = getEffectiveDailyTarget(w.date, w, settings);
       if (w.status === "holiday") {
-        holidayDays += fractionMultiplier(w.fraction);
+        holidayDays += effectiveDayFraction(w, offTarget);
         // A partial-day holiday's remainder is automatically a vacation-day request for the
         // rest of the day — paid (its hours are already folded into hours_worked/regularPay
         // above) and deducted from the vacation balance via computeLeaveUsage, or declined and
         // unpaid/excluded from salary here, same as any other unpaid leave day.
         if (w.remainderPaid === false) {
-          unpaidLeaveDays += 1 - fractionMultiplier(w.fraction);
+          unpaidLeaveDays += 1 - effectiveDayFraction(w, offTarget);
         }
       } else if (w.paid === false) {
         if (w.status === "off") {
-          unpaidOffDays += fractionMultiplier(w.fraction);
+          unpaidOffDays += effectiveDayFraction(w, offTarget);
         } else {
-          unpaidLeaveDays += fractionMultiplier(w.fraction);
+          unpaidLeaveDays += effectiveDayFraction(w, offTarget);
         }
       }
       continue;
