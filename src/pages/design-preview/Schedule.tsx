@@ -119,13 +119,18 @@ export default function DesignPreviewSchedule() {
                   const dKey = dateKey(new Date(year, month, day));
                   const isToday = dKey === todayKey;
                   const entry = entriesByDate.get(dKey);
+                  const isMixed = !!entry?.dayParts?.length;
                   const dayStatus: DayStatus | null =
-                    entry?.status && entry.status in STATUS_META
+                    !isMixed && entry?.status && entry.status in STATUS_META
                       ? (entry.status as DayStatus)
-                      : entry && getCountedHours(entry) > 0
+                      : !isMixed && entry && getCountedHours(entry) > 0
                         ? "worked"
                         : null;
                   const meta = dayStatus ? STATUS_META[dayStatus] : null;
+                  // "יום מגוון" (mixed day, including a "חול המועד" day) has its own violet-cyan
+                  // identity instead of any single STATUS_META color, since it's never just one category.
+                  const mixedColor = "#7639FF";
+                  const mixedBorderColor = "#00D2FF";
                   const isEvening = entry?.evening;
                   const hasNote = !!entry?.note;
                   const isWorkScheduled = settings.work_days[new Date(year, month, day).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase()];
@@ -137,17 +142,19 @@ export default function DesignPreviewSchedule() {
                           style={{
                             background: `linear-gradient(to bottom right, ${LH.primary}, ${LH.secondary})`,
                             boxShadow: "0 8px 20px rgba(89,2,232,0.3)",
-                            border: meta ? `2px solid ${meta.grad[1]}` : undefined,
+                            border: isMixed ? `2px solid ${mixedBorderColor}` : meta ? `2px solid ${meta.grad[1]}` : undefined,
                           }}
                         />
+                      ) : isMixed ? (
+                        <div className="absolute inset-1 rounded-full" style={{ background: `linear-gradient(155deg, ${mixedColor}24, ${mixedBorderColor}24)` }} />
                       ) : (
                         meta && <div className="absolute inset-1 rounded-full" style={{ background: meta.tint }} />
                       )}
                       <span
                         className="text-[16px] relative z-10 transition-colors font-bold"
                         style={{
-                          color: isToday ? LH.onPrimary : meta ? meta.grad[0] : isWorkScheduled ? LH.onSurfaceVariant : `${LH.onSurfaceVariant}66`,
-                          fontWeight: isToday || meta ? 700 : 400,
+                          color: isToday ? LH.onPrimary : isMixed ? mixedColor : meta ? meta.grad[0] : isWorkScheduled ? LH.onSurfaceVariant : `${LH.onSurfaceVariant}66`,
+                          fontWeight: isToday || isMixed || meta ? 700 : 400,
                         }}
                       >
                         {day}
@@ -168,6 +175,10 @@ export default function DesignPreviewSchedule() {
                     <span className="text-[11px] font-bold tracking-[0.05em]" style={{ color: LH.onSurfaceVariant }}>{STATUS_META[st].label}</span>
                   </div>
                 ))}
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2 h-2 rounded-full" style={{ background: "linear-gradient(155deg, #7639FF, #00D2FF)" }} />
+                  <span className="text-[11px] font-bold tracking-[0.05em]" style={{ color: LH.onSurfaceVariant }}>יום מגוון</span>
+                </div>
                 <div className="flex items-center gap-1.5">
                   <div className="w-2 h-2 rounded-full" style={{ background: LH.secondary }} />
                   <span className="text-[11px] font-bold tracking-[0.05em]" style={{ color: LH.onSurfaceVariant }}>משמרת ערב</span>

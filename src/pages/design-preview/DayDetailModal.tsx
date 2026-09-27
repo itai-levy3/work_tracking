@@ -229,6 +229,41 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
   const removeMixedPart = (id: string) => setMixedParts((parts) => parts.filter((p) => p.id !== id));
   const updateMixedPart = (id: string, patch: Partial<DayPart>) => setMixedParts((parts) => parts.map((p) => (p.id === id ? { ...p, ...patch } : p)));
 
+  // Converts whatever's already saved on a plain (single-status) day into its "יום מגוון"
+  // equivalent — one part for the genuinely worked stretch (if any) and one for the leave/off
+  // category — so the user can pick up exactly where they left off (e.g. "3/4 מחלה" already
+  // saved, just add the חג remainder) instead of re-entering everything from scratch.
+  const buildInitialMixedParts = (): DayPart[] => {
+    const st = (draft.status || "worked") as DayStatus;
+    const parts: DayPart[] = [];
+    if (st === "worked") {
+      const hours = getCountedHours(entry);
+      if (hours > 0) parts.push({ id: nextMixedPartId(), category: "worked", hours, start: draft.start_time, end: draft.end_time });
+      return parts;
+    }
+    const isSplit = !!draft.start_time && !!draft.end_time && draft.leaveHours !== undefined;
+    if (isSplit) {
+      const workedPortionHours = calcHours(draft.start_time, draft.end_time);
+      if (workedPortionHours > 0) parts.push({ id: nextMixedPartId(), category: "worked", hours: workedPortionHours, start: draft.start_time, end: draft.end_time });
+      const leaveHours = draft.leaveHours || 0;
+      if (leaveHours > 0) parts.push({ id: nextMixedPartId(), category: st, hours: leaveHours, paid: st === "holiday" ? true : draft.paid !== false });
+    } else {
+      const hours = draft.leaveHours !== undefined ? draft.leaveHours : fractionMultiplier(draft.fraction) * target;
+      if (hours > 0) parts.push({ id: nextMixedPartId(), category: st, hours, paid: st === "holiday" ? true : draft.paid !== false });
+    }
+    return parts;
+  };
+  const openAsMixed = () => {
+    setMixedParts(buildInitialMixedParts());
+    setMixedMode(true);
+    setEditing(true);
+  };
+  // Only offered while there's genuinely something left to divide up: a day already clocked in
+  // live, fully accounted for, or already in overtime has nothing left for another category to
+  // fill, so converting it would make no sense.
+  const isLiveOpenShift = status === "worked" && !!draft.start_time && !draft.end_time;
+  const canConvertToMixed = !!entry && !isLiveOpenShift && target > 0 && target - getCountedHours(entry) > 0.01;
+
   const save = (overrides: Partial<WorkHour> = {}) => {
     if (mixedMode) {
       const parts = mixedParts.filter((p) => (p.hours || 0) > 0);
@@ -379,7 +414,8 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
         <style>{modalStyle}</style>
         <RxDialog.Overlay className="ddm-overlay fixed inset-0 z-50" style={{ background: "rgba(16,26,70,0.5)", backdropFilter: "blur(4px)" }} />
         <RxDialog.Content
-          className="fixed inset-0 z-50 flex flex-col items-center justify-center outline-none px-6 py-8"
+          dir="rtl"
+          className="fixed inset-0 z-50 flex flex-col items-center outline-none px-6 py-8"
           style={{ overflowY: "auto" }}
         >
           <div className="ddm-header-in flex items-center gap-3 mb-5 px-5 py-2 rounded-full" style={{ background: "rgba(255,255,255,0.85)", backdropFilter: "blur(20px)", boxShadow: "0 10px 30px -10px rgba(16,26,70,0.25)" }}>
@@ -602,7 +638,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                             </span>
                           </div>
                           <div className="flex items-center justify-center px-1" style={{ background: `${meta.grad[1]}1A` }}>
-                            <span className="material-symbols-outlined text-[15px]" style={{ color: meta.grad[0] }}>arrow_forward</span>
+                            <span className="material-symbols-outlined text-[15px]" style={{ color: meta.grad[0] }}>arrow_back</span>
                           </div>
                           <div className="flex flex-col items-center px-4 py-2">
                             <span className="text-[8px] font-bold uppercase tracking-[0.14em] mb-0.5" style={{ color: "#8892b0" }}>יציאה</span>
@@ -637,10 +673,8 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                             {draft.start_time}
                           </span>
                         </div>
-                        {/* This panel renders LTR (portal, outside the RTL tree), so the flow
-                            entry → exit runs left-to-right and the arrow must point right. */}
                         <div className="flex items-center justify-center px-1" style={{ background: `${meta.grad[1]}1A` }}>
-                          <span className="material-symbols-outlined text-[17px]" style={{ color: meta.grad[0] }}>arrow_forward</span>
+                          <span className="material-symbols-outlined text-[17px]" style={{ color: meta.grad[0] }}>arrow_back</span>
                         </div>
                         <div className="flex flex-col items-center px-5 py-2.5">
                           <span className="text-[9px] font-bold uppercase tracking-[0.14em] mb-0.5" style={{ color: "#8892b0" }}>יציאה</span>
@@ -686,6 +720,14 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                   </div>
                   <span className="text-[11px] font-bold" style={{ color: "#7639FF" }}>עריכה</span>
                 </button>
+                {canConvertToMixed && (
+                  <button onClick={openAsMixed} className="ddm-round-btn flex flex-col items-center gap-1.5">
+                    <div className="w-14 h-14 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 10px 24px -8px rgba(118,57,255,0.5)" }}>
+                      <span className="material-symbols-outlined text-white" style={{ fontSize: 22 }}>grid_view</span>
+                    </div>
+                    <span className="text-[11px] font-bold" style={{ color: "#7639FF" }}>יום מגוון</span>
+                  </button>
+                )}
                 <button onClick={handleDeleteDay} className="ddm-round-btn flex flex-col items-center gap-1.5">
                   <div
                     className="w-14 h-14 rounded-full flex items-center justify-center"
@@ -758,38 +800,45 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
               </div>
 
               {mixedMode ? (
-                <div className="relative z-10 flex flex-col gap-3">
-                  <p className="text-[11px]" style={{ color: "#8892b0" }}>
+                <div className="relative z-10 flex flex-col gap-4">
+                  <p className="text-[11.5px] leading-relaxed" style={{ color: "#8892b0" }}>
                     פצל את היום לכמה קטגוריות — לדוגמה 3/4 מחלה + 1/4 חג, או חלק מהיום עבודה וחלק חופש.
                   </p>
+
                   {mixedParts.map((p, i) => {
                     const pm = STATUS_META[p.category];
                     const mode: "time" | "fraction" = p.start && p.end ? "time" : "fraction";
                     const remaining = mixedRemainingFor(p.id);
                     return (
-                      <div key={p.id} className="rounded-2xl p-3 flex flex-col gap-2" style={{ background: pm.tint, border: `1px solid ${pm.grad[0]}33` }}>
+                      <div
+                        key={p.id}
+                        className="rounded-[22px] p-3.5 flex flex-col gap-3 relative overflow-hidden"
+                        style={{ background: "#fff", boxShadow: "0 8px 22px -12px rgba(35,50,100,0.18)", borderInlineEnd: `4px solid ${pm.grad[0]}` }}
+                      >
                         <div className="flex items-center justify-between">
-                          <span className="text-[12px] font-bold flex items-center gap-1.5" style={{ color: pm.grad[0] }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{pm.icon}</span>
-                            {pm.label}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: `linear-gradient(155deg, ${pm.grad[0]}, ${pm.grad[1]})`, boxShadow: `0 6px 14px -4px ${pm.glow}` }}>
+                              <span className="material-symbols-outlined text-white" style={{ fontSize: 16 }}>{pm.icon}</span>
+                            </div>
+                            <span className="text-[13.5px] font-bold" style={{ color: "#101A46" }}>{pm.label}</span>
+                          </div>
                           <button
                             type="button"
                             onClick={() => removeMixedPart(p.id)}
-                            className="ddm-clear-link text-[9px] font-bold flex items-center gap-0.5"
-                            style={{ color: "#B0B7C9" }}
+                            className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
+                            style={{ background: "rgba(220,38,38,0.08)" }}
+                            title="מחיקת הקטגוריה הזו"
                           >
-                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>delete</span>
-                            מחיקה
+                            <span className="material-symbols-outlined" style={{ fontSize: 15, color: "#DC2626" }}>delete</span>
                           </button>
                         </div>
 
-                        <div className="flex gap-1.5">
+                        <div className="flex p-1 rounded-full" style={{ background: "rgba(35,50,100,0.04)" }}>
                           <button
                             type="button"
                             onClick={() => updateMixedPart(p.id, { start: null, end: null })}
-                            className="h-7 px-2.5 rounded-md text-[10px] font-bold"
-                            style={{ background: mode === "fraction" ? pm.grad[0] : "#fff", color: mode === "fraction" ? "#fff" : pm.grad[0] }}
+                            className="flex-1 h-8 rounded-full text-[11px] font-bold transition-colors"
+                            style={{ background: mode === "fraction" ? "#fff" : "transparent", color: mode === "fraction" ? pm.grad[0] : "#8892b0", boxShadow: mode === "fraction" ? "0 2px 8px rgba(35,50,100,0.08)" : "none" }}
                           >
                             חלק מהיום
                           </button>
@@ -800,8 +849,8 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                               const e = p.end || "13:00";
                               updateMixedPart(p.id, { start: s, end: e, hours: calcHours(s, e) });
                             }}
-                            className="h-7 px-2.5 rounded-md text-[10px] font-bold"
-                            style={{ background: mode === "time" ? pm.grad[0] : "#fff", color: mode === "time" ? "#fff" : pm.grad[0] }}
+                            className="flex-1 h-8 rounded-full text-[11px] font-bold transition-colors"
+                            style={{ background: mode === "time" ? "#fff" : "transparent", color: mode === "time" ? pm.grad[0] : "#8892b0", boxShadow: mode === "time" ? "0 2px 8px rgba(35,50,100,0.08)" : "none" }}
                           >
                             שעת כניסה/יציאה
                           </button>
@@ -809,7 +858,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
 
                         {mode === "time" ? (
                           <div className="flex items-center gap-2">
-                            <div className="ddm-field flex-1 rounded-xl px-2.5 py-1.5" style={{ background: "#fff", border: "1px solid #e4e1e6" }}>
+                            <div className="ddm-field flex-1 rounded-xl px-2.5 py-1.5" style={{ background: "#F8FAFF", border: "1px solid #e4e1e6" }}>
                               <label className="text-[9px] font-bold block" style={{ color: "#8892b0" }}>כניסה</label>
                               <input
                                 type="time"
@@ -819,8 +868,8 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                                 style={{ color: "#101A46" }}
                               />
                             </div>
-                            <span className="material-symbols-outlined text-[15px]" style={{ color: "#8892b0" }}>arrow_forward</span>
-                            <div className="ddm-field flex-1 rounded-xl px-2.5 py-1.5" style={{ background: "#fff", border: "1px solid #e4e1e6" }}>
+                            <span className="material-symbols-outlined text-[15px]" style={{ color: "#8892b0" }}>arrow_back</span>
+                            <div className="ddm-field flex-1 rounded-xl px-2.5 py-1.5" style={{ background: "#F8FAFF", border: "1px solid #e4e1e6" }}>
                               <label className="text-[9px] font-bold block" style={{ color: "#8892b0" }}>יציאה</label>
                               <input
                                 type="time"
@@ -839,9 +888,9 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                                   key={f}
                                   type="button"
                                   onClick={() => updateMixedPart(p.id, { hours: fractionMultiplier(f) * target })}
-                                  className="h-8 px-2.5 rounded-lg text-[11px] font-bold"
+                                  className="h-8 px-2.5 rounded-lg text-[11px] font-bold transition-transform active:scale-95"
                                   style={{
-                                    background: Math.abs((p.hours || 0) - fractionMultiplier(f) * target) < 0.01 ? pm.grad[0] : "#fff",
+                                    background: Math.abs((p.hours || 0) - fractionMultiplier(f) * target) < 0.01 ? `linear-gradient(155deg, ${pm.grad[0]}, ${pm.grad[1]})` : pm.tint,
                                     color: Math.abs((p.hours || 0) - fractionMultiplier(f) * target) < 0.01 ? "#fff" : pm.grad[0],
                                   }}
                                 >
@@ -852,14 +901,17 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                                 <button
                                   type="button"
                                   onClick={() => updateMixedPart(p.id, { hours: remaining })}
-                                  className="h-8 px-2.5 rounded-lg text-[11px] font-bold"
-                                  style={{ background: Math.abs((p.hours || 0) - remaining) < 0.01 ? pm.grad[0] : "#fff", color: Math.abs((p.hours || 0) - remaining) < 0.01 ? "#fff" : pm.grad[0] }}
+                                  className="h-8 px-2.5 rounded-lg text-[11px] font-bold transition-transform active:scale-95"
+                                  style={{
+                                    background: Math.abs((p.hours || 0) - remaining) < 0.01 ? `linear-gradient(155deg, ${pm.grad[0]}, ${pm.grad[1]})` : pm.tint,
+                                    color: Math.abs((p.hours || 0) - remaining) < 0.01 ? "#fff" : pm.grad[0],
+                                  }}
                                 >
                                   שאר היום ({formatHM(remaining)})
                                 </button>
                               )}
                             </div>
-                            <div className="ddm-field rounded-xl px-2.5 py-1.5" style={{ background: "#fff", border: "1px solid #e4e1e6" }}>
+                            <div className="ddm-field rounded-xl px-2.5 py-1.5" style={{ background: "#F8FAFF", border: "1px solid #e4e1e6" }}>
                               <label className="text-[9px] font-bold block" style={{ color: "#8892b0" }}>או הזנה מדויקת (שעות)</label>
                               <input
                                 type="number"
@@ -875,8 +927,8 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                         )}
 
                         {(p.category === "vacation" || p.category === "sick") && (
-                          <label className="flex items-center justify-between gap-2 px-1">
-                            <span className="text-[11px] font-medium" style={{ color: "#101A46" }}>{p.paid !== false ? "משולם" : "לא משולם"}</span>
+                          <label className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl" style={{ background: p.paid !== false ? "rgba(22,163,74,0.06)" : "rgba(220,38,38,0.06)" }}>
+                            <span className="text-[11.5px] font-bold" style={{ color: p.paid !== false ? "#16A34A" : "#DC2626" }}>{p.paid !== false ? "משולם" : "לא משולם"}</span>
                             <input type="checkbox" checked={p.paid !== false} onChange={(e) => updateMixedPart(p.id, { paid: e.target.checked })} className="w-4 h-4 accent-[#16A34A]" />
                           </label>
                         )}
@@ -885,26 +937,41 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                   })}
 
                   {mixedAvailableCategories.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {mixedAvailableCategories.map((c) => {
-                        const m = STATUS_META[c];
-                        return (
-                          <button
-                            key={c}
-                            type="button"
-                            onClick={() => addMixedPart(c)}
-                            className="h-9 px-3 rounded-lg text-[12px] font-bold flex items-center gap-1.5"
-                            style={{ background: m.tint, color: m.grad[0] }}
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{m.icon}</span>+ {m.label}
-                          </button>
-                        );
-                      })}
+                    <div className="flex flex-col gap-2">
+                      <span className="text-[10.5px] font-bold uppercase tracking-[0.06em]" style={{ color: "#8892b0" }}>הוספת קטגוריה</span>
+                      <div className="flex flex-wrap gap-3">
+                        {mixedAvailableCategories.map((c) => {
+                          const m = STATUS_META[c];
+                          return (
+                            <button key={c} type="button" onClick={() => addMixedPart(c)} className="ddm-status-btn flex flex-col items-center gap-1">
+                              <div className="w-10 h-10 rounded-full flex items-center justify-center relative" style={{ background: m.tint }}>
+                                <span className="material-symbols-outlined" style={{ fontSize: 18, color: m.grad[0] }}>{m.icon}</span>
+                                <div className="absolute -top-0.5 -left-0.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: m.grad[0] }}>
+                                  <span className="material-symbols-outlined text-white" style={{ fontSize: 11 }}>add</span>
+                                </div>
+                              </div>
+                              <span className="text-[9.5px] font-bold" style={{ color: "#46464f" }}>{m.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
 
-                  <div className="text-[11px] font-bold px-1" style={{ color: mixedTotalHours > target + 0.01 ? "#DC2626" : "#46464f" }}>
-                    סה"כ {formatHM(mixedTotalHours)} מתוך {formatHM(target)} שעות יעד
+                  <div className="flex flex-col gap-1.5 px-1 pt-1">
+                    <div className="flex items-center justify-between text-[11.5px] font-bold">
+                      <span style={{ color: "#46464f" }}>סה"כ מהיעד היומי</span>
+                      <span style={{ color: mixedTotalHours > target + 0.01 ? "#DC2626" : "#101A46" }}>{formatHM(mixedTotalHours)} / {formatHM(target)}</span>
+                    </div>
+                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(35,50,100,0.08)" }}>
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          width: `${target > 0 ? Math.min(100, (mixedTotalHours / target) * 100) : 0}%`,
+                          background: mixedTotalHours > target + 0.01 ? "#DC2626" : "linear-gradient(90deg, #7639FF, #00D2FF)",
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
               ) : status === "worked" ? (
@@ -937,7 +1004,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                                 style={{ color: "#101A46" }}
                               />
                             </div>
-                            <span className="material-symbols-outlined text-[15px]" style={{ color: "#8892b0" }}>arrow_forward</span>
+                            <span className="material-symbols-outlined text-[15px]" style={{ color: "#8892b0" }}>arrow_back</span>
                             <div className="flex-1 flex flex-col gap-0.5">
                               <label className="text-[9px] font-bold" style={{ color: "#8892b0" }}>יציאה</label>
                               <input

@@ -508,7 +508,6 @@ export default function DesignPreview() {
         .lh-rise { animation: lh-rise .7s cubic-bezier(.16,1,.3,1) both; }
         .kpi-rise { animation: kpi-rise .6s cubic-bezier(.16,1,.3,1) both; }
         @keyframes kpi-rise { from { opacity: 0; transform: translateY(10px) scale(0.9); } to { opacity: 1; transform: translateY(0) scale(1); } }
-        .kpi-shimmer { animation: kpi-spin 6s linear infinite; transform-origin: 50% 50%; }
         @keyframes kpi-spin { to { transform: rotate(360deg); } }
         .kpi-dot { animation: kpi-pulse 2.2s ease-in-out infinite; }
         @keyframes kpi-pulse { 0%,100% { transform: translate(-50%,-50%) scale(1); } 50% { transform: translate(-50%,-50%) scale(1.5); } }
@@ -864,9 +863,6 @@ export default function DesignPreview() {
                           className="relative flex items-center justify-center rounded-full"
                           style={{ width: k.size, height: k.size, background: "linear-gradient(155deg, rgba(255,255,255,0.9), rgba(255,255,255,0.5))", boxShadow: `0 14px 28px -10px ${k.glow}, inset 0 2px 3px rgba(255,255,255,0.9), inset 0 -3px 6px rgba(35,50,100,0.08)` }}
                         >
-                          <svg className="absolute inset-0 w-full h-full kpi-shimmer" viewBox="0 0 100 100">
-                            <circle cx="50" cy="50" r={r} fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeDasharray={`${c * 0.1} ${c}`} opacity="0.55" style={{ filter: "blur(1.5px)", mixBlendMode: "screen" }} />
-                          </svg>
                           <svg className="absolute inset-0 w-full h-full" style={{ transform: "rotate(-90deg)" }} viewBox="0 0 100 100">
                             <defs>
                               <linearGradient id={`kpiGrad${i}`} x1="0%" x2="100%" y1="0%" y2="100%">
@@ -1068,9 +1064,6 @@ export default function DesignPreview() {
                             className="relative flex items-center justify-center rounded-full"
                             style={{ width: size, height: size, background: "linear-gradient(155deg, rgba(255,255,255,0.9), rgba(255,255,255,0.5))", boxShadow: `0 16px 32px -10px ${glow}, inset 0 2px 3px rgba(255,255,255,0.9), inset 0 -3px 6px rgba(35,50,100,0.08)` }}
                           >
-                            <svg className="absolute inset-0 w-full h-full kpi-shimmer" viewBox="0 0 100 100">
-                              <circle cx="50" cy="50" r={rad} fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeDasharray={`${circ * 0.1} ${circ}`} opacity="0.5" style={{ filter: "blur(1.5px)", mixBlendMode: "screen" }} />
-                            </svg>
                             <svg className="absolute inset-0 w-full h-full" style={{ transform: "rotate(-90deg)" }} viewBox="0 0 100 100">
                               <defs>
                                 <linearGradient id={`rubricGrad-${r2.key}`} x1="0%" x2="100%" y1="0%" y2="100%">
