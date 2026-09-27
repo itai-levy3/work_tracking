@@ -735,11 +735,11 @@ export default function DesignPreview() {
                 </defs>
               </svg>
               {[
-                { top: "8%", left: "18%", d: "0s", s: 5 },
-                { top: "62%", left: "6%", d: ".7s", s: 4 },
-                { top: "14%", left: "82%", d: "1.4s", s: 4 },
-                { top: "70%", left: "92%", d: "2.1s", s: 5 },
-                { top: "40%", left: "50%", d: "1s", s: 3 },
+                { top: "4%", left: "6%", d: "0s", s: 5 },
+                { top: "62%", left: "4%", d: ".7s", s: 4 },
+                { top: "8%", left: "92%", d: "1.4s", s: 4 },
+                { top: "72%", left: "94%", d: "2.1s", s: 5 },
+                { top: "92%", left: "48%", d: "1s", s: 3 },
               ].map((sp, si) => (
                 <div key={si} className="kpi-sparkle absolute rounded-full pointer-events-none" style={{ top: sp.top, left: sp.left, width: sp.s, height: sp.s, background: "white", boxShadow: "0 0 6px 2px rgba(118,57,255,0.5)", animationDelay: sp.d, zIndex: 50 }} />
               ))}
