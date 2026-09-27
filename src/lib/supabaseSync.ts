@@ -77,6 +77,7 @@ const toDbSettings = (settings: UserSettings, firstName: string, userId: string)
   food_card_monthly_amount: settings.food_card_monthly_amount ?? 0,
   food_card_daily_cap: settings.food_card_daily_cap ?? 0,
   food_presets: settings.food_presets ?? [],
+  chol_hamoed_mode: settings.chol_hamoed_mode ?? "three_quarters_work",
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -125,6 +126,7 @@ const fromDbSettings = (row: any): { settings: UserSettings; firstName: string }
     food_card_monthly_amount: Number(row.food_card_monthly_amount) || 0,
     food_card_daily_cap: Number(row.food_card_daily_cap) || 0,
     food_presets: row.food_presets ?? [],
+    chol_hamoed_mode: row.chol_hamoed_mode ?? "three_quarters_work",
   },
 });
 
@@ -154,6 +156,7 @@ const toDbWorkHour = (w: WorkHour, userId: string) => ({
   note: w.note ?? null,
   one_time_planned_hours: w.oneTimePlannedHours ?? null,
   day_parts: w.dayParts ?? null,
+  overtime_target_hours: w.overtimeTargetHours ?? null,
 });
 
 // Postgres' time columns round-trip as "HH:MM:SS" — trim to "HH:MM" to match what the app itself
@@ -177,6 +180,7 @@ const fromDbWorkHour = (row: any): WorkHour => ({
   note: row.note ?? undefined,
   oneTimePlannedHours: row.one_time_planned_hours != null ? Number(row.one_time_planned_hours) : undefined,
   dayParts: row.day_parts ?? undefined,
+  overtimeTargetHours: row.overtime_target_hours != null ? Number(row.overtime_target_hours) : undefined,
 });
 
 export const pushWorkHour = async (workHour: WorkHour): Promise<void> => {

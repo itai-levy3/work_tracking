@@ -8,6 +8,7 @@ import {
   computeCumulativeLeaveUsage,
   computeMonthlyPayroll,
   computeVacationMinimumStatus,
+  DayPart,
   DayStatus,
   formatHM,
   fractionMultiplier,
@@ -21,6 +22,7 @@ import {
   UserSettings,
   WorkHour,
 } from "@/lib/localData";
+import { CholHamoedModal } from "./design-preview/CholHamoedModal";
 import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LHBottomNav, LHLoadingScreen } from "./design-preview/Shared";
@@ -59,6 +61,7 @@ export default function DesignPreview() {
   const [dayModalEntry, setDayModalEntry] = useState<WorkHour | undefined>(undefined);
   const [clockInEditOpen, setClockInEditOpen] = useState(false);
   const [quickMarkKind, setQuickMarkKind] = useState<"vacation" | "sick" | "holiday" | "off" | null>(null);
+  const [cholHamoedOpen, setCholHamoedOpen] = useState(false);
 
   const loadMonth = (month: Date, s?: UserSettings) => {
     const hrs = getWorkHoursForMonth(month.getFullYear(), month.getMonth());
@@ -267,7 +270,7 @@ export default function DesignPreview() {
   // On a day that isn't a scheduled work day, todayTarget is 0 (so every hour worked is overtime —
   // see getDailyTargetHoursForDate). If the user confirmed a one-time shift, oneTimePlannedHours
   // carries the duration they stated purely for the countdown / estimated-exit display below.
-  const displayTarget = todayEntry?.oneTimePlannedHours || todayTarget;
+  const displayTarget = todayEntry?.oneTimePlannedHours || todayEntry?.overtimeTargetHours || todayTarget;
   // Part-time with no planned hours today: no target at all, so the giant clock counts up like a
   // plain stopwatch instead of counting down/into "overtime" against a target that doesn't exist.
   const isOpenStopwatch = isPartTime && !todayEntry?.oneTimePlannedHours;
@@ -331,7 +334,7 @@ export default function DesignPreview() {
   // ---- Clock in/out ----
   // Clocking in again on a day that was already clocked out earlier starts a NEW segment instead
   // of overwriting the day — the earlier shift's hours are preserved and added to, not lost.
-  const doClockIn = (oneTimePlannedHours?: number, evening?: boolean) => {
+  const doClockIn = (oneTimePlannedHours?: number, evening?: boolean, overtimeTargetHours?: number) => {
     const time = nowHM();
     const alreadyCompletedToday = todayEntry?.status === "worked" && todayEntry.start_time && todayEntry.end_time;
     if (alreadyCompletedToday && todayEntry) {
@@ -356,6 +359,7 @@ export default function DesignPreview() {
         hours_worked: 0,
         status: "worked",
         oneTimePlannedHours,
+        overtimeTargetHours,
         evening,
         segments: [{ start: time, end: null, evening }],
       });
@@ -366,9 +370,11 @@ export default function DesignPreview() {
       text: alreadyCompletedToday ? "חזרת לעבודה! 💪" : "המשמרת התחילה! 💪",
       sub: oneTimePlannedHours
         ? `יום חד-פעמי · ${formatHM(oneTimePlannedHours)} שעות · הכל שעות נוספות`
-        : evening
-          ? `נרשמה כניסה למשמרת ערב בשעה ${time}`
-          : `נרשמה כניסה בשעה ${time}`,
+        : overtimeTargetHours
+          ? `חול המועד · ${formatHM(overtimeTargetHours)} שעות עבודה, אחר כך שעות נוספות`
+          : evening
+            ? `נרשמה כניסה למשמרת ערב בשעה ${time}`
+            : `נרשמה כניסה בשעה ${time}`,
     });
     setTimeout(() => setActionPopup(null), 2200);
   };
@@ -422,6 +428,34 @@ export default function DesignPreview() {
         ? todayEntry.segments.map((seg, i, arr) => (i === arr.length - 1 ? { ...seg, end: time } : seg))
         : [{ start: todayEntry.start_time, end: time, evening: todayEntry.evening }];
     const totalHours = segments!.reduce((s, seg) => s + calcHoursBetween(seg.start, seg.end), 0);
+    // A "חול המועד" workday clocks out straight into its automatic חג remainder — the reduced
+    // work target it clocked in against (overtimeTargetHours) is what's left of the normal daily
+    // target, always fully paid regardless of how much overtime was worked past it.
+    if (todayEntry.overtimeTargetHours !== undefined && !todayEntry.dayParts) {
+      const fullTarget = getEffectiveDailyTarget(todayStr, todayEntry, settings!);
+      const holidayHours = Math.max(0, fullTarget - todayEntry.overtimeTargetHours);
+      const parts: DayPart[] = [
+        { id: "chm-worked", category: "worked", hours: totalHours, start: segments![0].start, end: time },
+        { id: "chm-holiday", category: "holiday", hours: holidayHours },
+      ];
+      upsertWorkHour({
+        ...todayEntry,
+        end_time: null,
+        start_time: null,
+        segments: undefined,
+        status: undefined,
+        hours_worked: totalHours + holidayHours,
+        dayParts: parts,
+      });
+      refresh();
+      setActionPopup({
+        kind: "out",
+        text: "כל הכבוד, סיימת! 🎉",
+        sub: `${formatHM(totalHours)} שעות עבודה + ${formatHM(holidayHours)} שעות חג היום`,
+      });
+      setTimeout(() => setActionPopup(null), 2200);
+      return;
+    }
     upsertWorkHour({ ...todayEntry, end_time: time, hours_worked: totalHours, segments });
     refresh();
     setActionPopup({
@@ -711,6 +745,14 @@ export default function DesignPreview() {
                 </button>
               );
             })}
+            {!isClockedIn && (
+              <button onClick={() => setCholHamoedOpen(true)} className="flex flex-col items-center gap-1.5 active:scale-95 transition-transform">
+                <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(155deg, #7639FF, #B39CFF)", boxShadow: "0 10px 22px -6px rgba(118,57,255,0.5)" }}>
+                  <span className="material-symbols-outlined text-white" style={{ fontSize: 20 }}>festival</span>
+                </div>
+                <span className="text-[10.5px] font-bold" style={{ color: "#46464f" }}>חול המועד</span>
+              </button>
+            )}
           </div>
 
           {/* Month selector + KPI instruments */}
@@ -1244,6 +1286,17 @@ export default function DesignPreview() {
         onClose={() => setQuickMarkKind(null)}
         onSaved={refresh}
         onSettingsUpdated={setSettings}
+      />
+
+      <CholHamoedModal
+        open={cholHamoedOpen}
+        date={new Date()}
+        existingEntry={todayEntry}
+        settings={settings}
+        onClose={() => setCholHamoedOpen(false)}
+        onSaved={refresh}
+        onSettingsUpdated={setSettings}
+        onStartWork={(targetHours) => doClockIn(undefined, undefined, targetHours)}
       />
 
       {offDayPrompt && (

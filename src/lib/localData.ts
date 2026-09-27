@@ -98,6 +98,16 @@ export interface WorkHour {
    * ordinary attendance-tracking flow overtime tiers were built for.
    */
   dayParts?: DayPart[];
+  /**
+   * Only meaningful together with dayParts' "worked"-category hours: caps how many of them count
+   * toward the plain daily target before overtime kicks in, instead of a mixed day's worked hours
+   * never earning overtime (the plain default — see computeRawMonthPay). Set by the "חול המועד"
+   * flow, whose work portion is a REDUCED target (e.g. 3/4 of a normal day), not skipped entirely
+   * like a one-time unscheduled shift (oneTimePlannedHours) — every minute past it is genuinely
+   * overtime. Also read live, while the shift is still open, to drive the countdown/estimated-exit
+   * display against that reduced target instead of the day's normal full target.
+   */
+  overtimeTargetHours?: number;
 }
 
 /** One category-slice of a "mixed day" (יום מגוון). Only ever read when WorkHour.dayParts is set. */
@@ -270,7 +280,29 @@ export interface UserSettings {
   /** Saved meal places (e.g. "מסעדה ליד העבודה" · ₪32) — one tap logs an expense at that price
    * instantly instead of typing the amount every time. Editable in place if the price changes. */
   food_presets?: FoodPreset[];
+
+  /**
+   * How the dedicated "חול המועד" home-page button splits that day: "three_quarters_work"
+   * (default) = 3/4 of the daily target is a normal workday (or vacation, the user's choice) and
+   * 1/4 is always a company-paid חג. "half_work" = the same, but the split is 50/50 instead.
+   * "fully_paid" = the entire day is company-paid חג — no work, no vacation deduction, no choice
+   * to offer at all.
+   */
+  chol_hamoed_mode?: "three_quarters_work" | "half_work" | "fully_paid";
 }
+
+/** The fraction of chol hamoed's daily target that's a normal workday (or vacation) rather than
+ * the always-company-paid חג remainder — see UserSettings.chol_hamoed_mode. */
+export const getCholHamoedWorkFraction = (settings: UserSettings): number => {
+  switch (settings.chol_hamoed_mode) {
+    case "half_work":
+      return 0.5;
+    case "fully_paid":
+      return 0;
+    default:
+      return 0.75;
+  }
+};
 
 export interface FoodPreset {
   id: string;
@@ -453,6 +485,7 @@ const defaultSettings: UserSettings = {
   food_card_monthly_amount: 0,
   food_card_daily_cap: 0,
   food_presets: [],
+  chol_hamoed_mode: "three_quarters_work",
 };
 
 const defaultData: LocalDataShape = {
@@ -555,6 +588,7 @@ const safeParseUserData = (raw: string | null): LocalDataShape => {
         food_card_daily_cap:
           typeof parsed.settings?.food_card_daily_cap === "number" ? parsed.settings.food_card_daily_cap : defaultSettings.food_card_daily_cap,
         food_presets: Array.isArray(parsed.settings?.food_presets) ? parsed.settings.food_presets : defaultSettings.food_presets,
+        chol_hamoed_mode: parsed.settings?.chol_hamoed_mode ?? defaultSettings.chol_hamoed_mode,
       },
       workHours: Array.isArray(parsed.workHours) ? parsed.workHours : [],
       foodEntries: Array.isArray(parsed.foodEntries) ? parsed.foodEntries : [],
@@ -1090,12 +1124,13 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
       const target = getEffectiveDailyTarget(w.date, w, settings);
       let dayPaidHours = 0;
       let hasWorkedPart = false;
+      let workedHoursTotal = 0;
       for (const p of w.dayParts) {
         const hours = p.hours || 0;
         if (hours <= 0) continue;
         if (p.category === "worked") {
           hasWorkedPart = true;
-          dayPaidHours += hours;
+          workedHoursTotal += hours;
         } else if (p.category === "holiday") {
           dayPaidHours += hours;
           if (target > 0) holidayDays += Math.min(1, hours / target);
@@ -1105,6 +1140,25 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
           if (target > 0) unpaidLeaveDays += Math.min(1, hours / target);
         } else {
           dayPaidHours += hours;
+        }
+      }
+      if (workedHoursTotal > 0) {
+        // A mixed day's worked hours never earn overtime by default (same precedent as the older
+        // single-leave split-day flow) — EXCEPT when overtimeTargetHours is set (the "חול המועד"
+        // work flow), whose reduced target is a real overtime threshold, not skipped entirely.
+        if (w.overtimeTargetHours !== undefined && useOvertime) {
+          const rawOvertime = Math.max(0, workedHoursTotal - w.overtimeTargetHours);
+          const dayOvertime = settings.overtime_round_hours ? Math.floor(rawOvertime + 1e-9) : rawOvertime;
+          const dayRegular = workedHoursTotal - dayOvertime;
+          const dayRegularPay = dayRegular * baseRate;
+          const dayOvertimePay = computeOvertimePay(dayOvertime, baseRate, settings.overtime_tiers);
+          regularHours += dayRegular;
+          overtimeHours += dayOvertime;
+          regularPay += dayRegularPay;
+          overtimePay += dayOvertimePay;
+          perDay.push({ date: w.date, regularHours: dayRegular, overtimeHours: dayOvertime, regularPay: dayRegularPay, overtimePay: dayOvertimePay });
+        } else {
+          dayPaidHours += workedHoursTotal;
         }
       }
       if (dayPaidHours > 0) {

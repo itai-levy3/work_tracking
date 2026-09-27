@@ -155,6 +155,9 @@ export default function DesignPreviewSettings() {
   const [eveningDialogOpen, setEveningDialogOpen] = useState(false);
   const [eveningHoursInput, setEveningHoursInput] = useState("7");
 
+  const [cholHamoedDialogOpen, setCholHamoedDialogOpen] = useState(false);
+  const [cholHamoedModeDraft, setCholHamoedModeDraft] = useState<"three_quarters_work" | "half_work" | "fully_paid">("three_quarters_work");
+
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
   const [vacationDaysInput, setVacationDaysInput] = useState("12");
   const [sickDaysInput, setSickDaysInput] = useState("18");
@@ -502,6 +505,18 @@ export default function DesignPreviewSettings() {
     persist({ ...settings, overtime_payout_month: v });
   };
 
+  const openCholHamoedDialog = () => {
+    if (!settings) return;
+    setCholHamoedModeDraft(settings.chol_hamoed_mode ?? "three_quarters_work");
+    setCholHamoedDialogOpen(true);
+  };
+  const saveCholHamoed = () => {
+    if (!settings) return;
+    persist({ ...settings, chol_hamoed_mode: cholHamoedModeDraft });
+    setCholHamoedDialogOpen(false);
+    toast.success("הגדרות חול המועד עודכנו");
+  };
+
   const openLeaveDialog = () => {
     if (!settings) return;
     setVacationDaysInput(String(settings.annual_vacation_days ?? 12));
@@ -839,6 +854,17 @@ export default function DesignPreviewSettings() {
                 onChange={(v) => setOvertimePayoutMonth(v ? "next" : "current")}
               />
             )}
+            <Row
+              title="חול המועד"
+              value={
+                settings.chol_hamoed_mode === "half_work"
+                  ? "חצי יום עבודה, חצי חג"
+                  : settings.chol_hamoed_mode === "fully_paid"
+                    ? "חג מלא (על חשבון החברה)"
+                    : "3/4 יום עבודה, 1/4 חג"
+              }
+              onClick={openCholHamoedDialog}
+            />
           </Section>
 
           <Section icon="beach_access" title="חופש ומחלה">
@@ -1159,6 +1185,40 @@ export default function DesignPreviewSettings() {
       </Dialog>
 
       {/* Leave & sick settings dialog */}
+      <Dialog open={cholHamoedDialogOpen} onOpenChange={setCholHamoedDialogOpen}>
+        <DialogContent className={dialogClassName} style={{ background: LH.background, fontFamily: "'Heebo', system-ui, sans-serif" }} dir="rtl">
+          <DialogHeader>
+            <DialogTitle style={{ color: LH.onSurface }}>חול המועד</DialogTitle>
+          </DialogHeader>
+          <p className="text-[12px]" style={{ color: LH.onSurfaceVariant }}>
+            איך לחלק את יום חול המועד כשמשתמשים בכפתור הייעודי בדף הבית — כמה ממנו יום עבודה רגיל (או חופש), וכמה חג משולם על חשבון החברה.
+          </p>
+          <div className="flex flex-col gap-2">
+            {(
+              [
+                { key: "three_quarters_work", label: "3/4 יום עבודה, 1/4 חג (ברירת מחדל)" },
+                { key: "half_work", label: "חצי יום עבודה, חצי חג" },
+                { key: "fully_paid", label: "חג מלא — לא על חשבון העובד" },
+              ] as const
+            ).map((m) => (
+              <button
+                key={m.key}
+                onClick={() => setCholHamoedModeDraft(m.key)}
+                className="w-full text-right p-3 rounded-2xl flex items-center justify-between"
+                style={{
+                  background: cholHamoedModeDraft === m.key ? `${LH.primary}14` : `${LH.primary}08`,
+                  border: cholHamoedModeDraft === m.key ? `1.5px solid ${LH.primary}` : "1.5px solid transparent",
+                }}
+              >
+                <span className="text-[13px] font-bold" style={{ color: LH.onSurface }}>{m.label}</span>
+                {cholHamoedModeDraft === m.key && <span className="material-symbols-outlined" style={{ color: LH.primary, fontSize: 18 }}>check_circle</span>}
+              </button>
+            ))}
+          </div>
+          <button onClick={saveCholHamoed} className="w-full h-11 rounded-xl font-bold text-white mt-2" style={{ background: LH.primary }}>שמירה</button>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={leaveDialogOpen} onOpenChange={setLeaveDialogOpen}>
         <DialogContent className={dialogClassName} style={{ background: LH.background, fontFamily: "'Heebo', system-ui, sans-serif" }} dir="rtl">
           <DialogHeader>
