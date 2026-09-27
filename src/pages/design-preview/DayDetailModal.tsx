@@ -5,6 +5,7 @@ import * as RxDialog from "@radix-ui/react-dialog";
 import {
   calcHoursBetween,
   DayFraction,
+  DayPart,
   DayStatus,
   deleteWorkHourByDate,
   fractionMultiplier,
@@ -20,6 +21,12 @@ import { STATUS_META } from "./tokens";
 /** Statuses that behave like a non-worked day: fixed hours from the daily target, no time entry. */
 const OFF_LIKE_STATUSES: DayStatus[] = ["vacation", "sick", "holiday", "off"];
 const FRACTION_LABEL: Record<DayFraction, string> = { full: "יום מלא", three_quarters: "3/4 יום", half: "חצי יום", quarter: "1/4 יום" };
+/** Every category a "יום מגוון" (mixed day) slice can be — same 5 as a plain day, just several at once. */
+const MIXED_CATEGORY_ORDER: DayStatus[] = ["worked", "vacation", "sick", "holiday", "off"];
+/** A mixed-day slice is never a "full" day (that would defeat the point of mixing categories). */
+const MIXED_FRACTIONS: DayFraction[] = ["quarter", "half", "three_quarters"];
+let mixedPartIdSeq = 0;
+const nextMixedPartId = () => `mp-${Date.now()}-${mixedPartIdSeq++}`;
 
 const WEEKDAY_HE_LONG = ["יום ראשון", "יום שני", "יום שלישי", "יום רביעי", "יום חמישי", "יום שישי", "שבת"];
 const MONTH_HE = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
@@ -135,6 +142,11 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
   // worked the morning, then left for a half-day vacation. Off by default; turns on automatically
   // when re-opening a day that was already saved with both a status and real times.
   const [splitWorked, setSplitWorked] = useState(false);
+  // "יום מגוון" (mixed day) — a day split into several independent categories at once, each its
+  // own slice with its own hours and paid/unpaid treatment. Mutually exclusive with the plain
+  // single-status editor above; only ever populated from WorkHour.dayParts.
+  const [mixedMode, setMixedMode] = useState(false);
+  const [mixedParts, setMixedParts] = useState<DayPart[]>([]);
 
   useEffect(() => {
     if (!date) return;
@@ -143,13 +155,17 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
         ? { ...entry }
         : { date: dateKey(date), hours_worked: 0, start_time: null, end_time: null, status: "worked" },
     );
-    // A day that already has recorded data (worked hours, a non-worked status, or a note) opens
-    // in the circular summary view; a blank day goes straight into editing.
-    const hasData = !!entry && (getCountedHours(entry) > 0 || !!entry.start_time || (entry.status && entry.status !== "worked") || !!entry.note);
+    // A day that already has recorded data (worked hours, a non-worked status, a mixed-day
+    // breakdown, or a note) opens in the circular summary view; a blank day goes straight into editing.
+    const hasData =
+      !!entry &&
+      (getCountedHours(entry) > 0 || !!entry.start_time || (entry.status && entry.status !== "worked") || !!entry.note || !!entry.dayParts?.length);
     setEditing(!hasData);
     setConfirmDelete(false);
     setConfirmDeleteSegment(null);
     setSplitWorked(!!entry && !!entry.status && entry.status !== "worked" && !!entry.start_time && !!entry.end_time);
+    setMixedMode(!!entry?.dayParts?.length);
+    setMixedParts(entry?.dayParts ? entry.dayParts.map((p) => ({ ...p })) : []);
   }, [date, entry]);
 
   // Counts the orb's hero number up from 0 to its real value on open, for a livelier reveal.
@@ -200,9 +216,45 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
   // otherwise the deficit banner shows the pre-edit value until save.
   const worked = status === "worked" ? calcHours(draft.start_time, draft.end_time) || Number(draft.hours_worked || 0) : Number(draft.hours_worked || 0);
   const deficit = status === "worked" && hasTimes ? Math.max(0, target - worked) : 0;
-  const hasSavedData = !!entry && (getCountedHours(entry) > 0 || !!entry.start_time || (entry.status && entry.status !== "worked") || !!entry.note);
+  const hasSavedData =
+    !!entry &&
+    (getCountedHours(entry) > 0 || !!entry.start_time || (entry.status && entry.status !== "worked") || !!entry.note || !!entry.dayParts?.length);
+
+  // ---- "יום מגוון" (mixed day) helpers ----
+  const mixedAvailableCategories = MIXED_CATEGORY_ORDER.filter((c) => !mixedParts.some((p) => p.category === c));
+  const mixedTotalHours = mixedParts.reduce((s, p) => s + (p.hours || 0), 0);
+  const mixedRemainingFor = (excludeId: string) => Math.max(0, target - mixedParts.filter((p) => p.id !== excludeId).reduce((s, p) => s + (p.hours || 0), 0));
+  const addMixedPart = (category: DayStatus) =>
+    setMixedParts((parts) => [...parts, { id: nextMixedPartId(), category, hours: 0, paid: category === "off" ? false : true }]);
+  const removeMixedPart = (id: string) => setMixedParts((parts) => parts.filter((p) => p.id !== id));
+  const updateMixedPart = (id: string, patch: Partial<DayPart>) => setMixedParts((parts) => parts.map((p) => (p.id === id ? { ...p, ...patch } : p)));
 
   const save = (overrides: Partial<WorkHour> = {}) => {
+    if (mixedMode) {
+      const parts = mixedParts.filter((p) => (p.hours || 0) > 0);
+      const merged: WorkHour = {
+        date: dateKey(date),
+        hours_worked: parts.reduce((s, p) => s + p.hours, 0),
+        start_time: null,
+        end_time: null,
+        segments: undefined,
+        status: undefined,
+        fraction: undefined,
+        paid: undefined,
+        evening: draft.evening,
+        deficitCoveredBy: undefined,
+        remainderPaid: undefined,
+        leaveHours: undefined,
+        note: draft.note?.trim() || undefined,
+        dayParts: parts,
+        ...overrides,
+      };
+      upsertWorkHour(merged);
+      onSaved();
+      onClose();
+      toast.success("היום עודכן");
+      return;
+    }
     const merged: WorkHour = {
       date: dateKey(date),
       hours_worked: draft.hours_worked || 0,
@@ -215,6 +267,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
       evening: draft.evening,
       deficitCoveredBy: draft.deficitCoveredBy,
       note: draft.note?.trim() || undefined,
+      dayParts: undefined,
       ...overrides,
     };
     if (OFF_LIKE_STATUSES.includes((merged.status || "worked") as DayStatus)) {
@@ -338,7 +391,70 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
             </RxDialog.Close>
           </div>
 
-          {!editing && hasSavedData ? (
+          {!editing && hasSavedData && entry?.dayParts?.length ? (
+            // ---- "יום מגוון" summary — several independent category-slices, shown as a stack of chips ----
+            <div className="flex flex-col items-center gap-5 w-full max-w-[360px]">
+              <div className="flex flex-col items-center gap-1">
+                <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 14px 30px -10px rgba(118,57,255,0.45)" }}>
+                  <span className="material-symbols-outlined text-white" style={{ fontSize: 28 }}>grid_view</span>
+                </div>
+                <span className="text-[13px] font-bold uppercase tracking-wider mt-1" style={{ color: "#7639FF" }}>יום מגוון</span>
+                <span className="text-[30px] font-bold tabular-nums" style={{ color: "#101A46", fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                  {formatHM(entry.dayParts.reduce((s, p) => s + (p.hours || 0), 0))}
+                </span>
+              </div>
+              <div className="flex flex-col gap-2 w-full">
+                {entry.dayParts.map((p, i) => {
+                  const pm = STATUS_META[p.category];
+                  return (
+                    <div key={p.id || i} className="flex items-center justify-between rounded-2xl px-4 py-2.5" style={{ background: pm.tint, border: `1px solid ${pm.grad[0]}33` }}>
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined" style={{ fontSize: 17, color: pm.grad[0] }}>{pm.icon}</span>
+                        <span className="text-[13px] font-bold" style={{ color: "#101A46" }}>{pm.label}</span>
+                        {p.start && p.end && (
+                          <span className="text-[11px] font-medium" dir="ltr" style={{ color: "#8892b0" }}>{p.start}-{p.end}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-bold tabular-nums" style={{ color: pm.grad[0] }}>{formatHM(p.hours || 0)}</span>
+                        {(p.category === "vacation" || p.category === "sick") && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "#fff", color: p.paid !== false ? "#16A34A" : "#DC2626" }}>
+                            {p.paid !== false ? "משולם" : "לא משולם"}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {draft.note && (
+                <div className="flex items-start gap-2 px-4 py-2 rounded-2xl max-w-[280px] self-center" style={{ background: "rgba(0,1,20,0.03)" }}>
+                  <span className="material-symbols-outlined text-[15px] mt-0.5 shrink-0" style={{ color: "#8892b0" }}>event_note</span>
+                  <span className="text-[12.5px]" style={{ color: "#101A46" }}>{draft.note}</span>
+                </div>
+              )}
+              <div className="flex items-start gap-6 mt-1">
+                <button onClick={() => setEditing(true)} className="ddm-round-btn flex flex-col items-center gap-1.5">
+                  <div className="w-14 h-14 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 10px 24px -8px rgba(118,57,255,0.5)" }}>
+                    <span className="material-symbols-outlined text-white" style={{ fontSize: 22 }}>edit</span>
+                  </div>
+                  <span className="text-[11px] font-bold" style={{ color: "#7639FF" }}>עריכה</span>
+                </button>
+                <button onClick={handleDeleteDay} className="ddm-round-btn flex flex-col items-center gap-1.5">
+                  <div
+                    className="w-14 h-14 rounded-full flex items-center justify-center"
+                    style={{
+                      background: confirmDelete ? "linear-gradient(155deg,#DC2626,#F87171)" : "rgba(220,38,38,0.1)",
+                      boxShadow: confirmDelete ? "0 10px 24px -8px rgba(220,38,38,0.5)" : "none",
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 22, color: confirmDelete ? "#fff" : "#DC2626" }}>{confirmDelete ? "check" : "delete_forever"}</span>
+                  </div>
+                  <span className="text-[11px] font-bold" style={{ color: "#DC2626" }}>{confirmDelete ? "לאשר" : "מחיקה"}</span>
+                </button>
+              </div>
+            </div>
+          ) : !editing && hasSavedData ? (
             // ---- Fully circular floating "orb" summary — no card, no corners ----
             <div className="flex flex-col items-center gap-6">
               <div className="relative flex items-center justify-center" style={{ width: 320, height: 320 }}>
@@ -599,14 +715,17 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
             >
               <div className="absolute -top-16 -right-16 w-48 h-48 rounded-full pointer-events-none" style={{ background: `radial-gradient(circle, ${meta.glow}, transparent 70%)`, opacity: 0.35, filter: "blur(20px)" }} />
 
-              <div className="grid grid-cols-5 gap-1.5 relative z-10">
+              <div className="grid grid-cols-6 gap-1.5 relative z-10">
                 {(Object.keys(STATUS_META) as DayStatus[]).map((st) => {
                   const m = STATUS_META[st];
-                  const isActive = status === st;
+                  const isActive = !mixedMode && status === st;
                   return (
                     <button
                       key={st}
-                      onClick={() => setDraft((d) => ({ ...d, status: st }))}
+                      onClick={() => {
+                        setMixedMode(false);
+                        setDraft((d) => ({ ...d, status: st }));
+                      }}
                       className="ddm-status-btn flex flex-col items-center gap-1.5 py-1"
                     >
                       <div
@@ -623,9 +742,172 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                     </button>
                   );
                 })}
+                <button onClick={() => setMixedMode(true)} className="ddm-status-btn flex flex-col items-center gap-1.5 py-1">
+                  <div
+                    className="ddm-status-badge w-11 h-11 rounded-full flex items-center justify-center"
+                    style={{
+                      background: mixedMode ? "linear-gradient(155deg, #7639FF, #00D2FF)" : "rgba(35,50,100,0.05)",
+                      boxShadow: mixedMode ? "0 8px 18px -6px rgba(118,57,255,0.5), 0 0 0 3px rgba(118,57,255,0.08)" : "none",
+                      transform: mixedMode ? "scale(1.08)" : undefined,
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 20, color: mixedMode ? "#fff" : "#8892b0" }}>grid_view</span>
+                  </div>
+                  <span className="text-[10px] font-bold" style={{ color: mixedMode ? "#7639FF" : "#8892b0" }}>יום מגוון</span>
+                </button>
               </div>
 
-              {status === "worked" ? (
+              {mixedMode ? (
+                <div className="relative z-10 flex flex-col gap-3">
+                  <p className="text-[11px]" style={{ color: "#8892b0" }}>
+                    פצל את היום לכמה קטגוריות — לדוגמה 3/4 מחלה + 1/4 חג, או חלק מהיום עבודה וחלק חופש.
+                  </p>
+                  {mixedParts.map((p, i) => {
+                    const pm = STATUS_META[p.category];
+                    const mode: "time" | "fraction" = p.start && p.end ? "time" : "fraction";
+                    const remaining = mixedRemainingFor(p.id);
+                    return (
+                      <div key={p.id} className="rounded-2xl p-3 flex flex-col gap-2" style={{ background: pm.tint, border: `1px solid ${pm.grad[0]}33` }}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[12px] font-bold flex items-center gap-1.5" style={{ color: pm.grad[0] }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{pm.icon}</span>
+                            {pm.label}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => removeMixedPart(p.id)}
+                            className="ddm-clear-link text-[9px] font-bold flex items-center gap-0.5"
+                            style={{ color: "#B0B7C9" }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>delete</span>
+                            מחיקה
+                          </button>
+                        </div>
+
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => updateMixedPart(p.id, { start: null, end: null })}
+                            className="h-7 px-2.5 rounded-md text-[10px] font-bold"
+                            style={{ background: mode === "fraction" ? pm.grad[0] : "#fff", color: mode === "fraction" ? "#fff" : pm.grad[0] }}
+                          >
+                            חלק מהיום
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const s = p.start || "09:00";
+                              const e = p.end || "13:00";
+                              updateMixedPart(p.id, { start: s, end: e, hours: calcHours(s, e) });
+                            }}
+                            className="h-7 px-2.5 rounded-md text-[10px] font-bold"
+                            style={{ background: mode === "time" ? pm.grad[0] : "#fff", color: mode === "time" ? "#fff" : pm.grad[0] }}
+                          >
+                            שעת כניסה/יציאה
+                          </button>
+                        </div>
+
+                        {mode === "time" ? (
+                          <div className="flex items-center gap-2">
+                            <div className="ddm-field flex-1 rounded-xl px-2.5 py-1.5" style={{ background: "#fff", border: "1px solid #e4e1e6" }}>
+                              <label className="text-[9px] font-bold block" style={{ color: "#8892b0" }}>כניסה</label>
+                              <input
+                                type="time"
+                                value={p.start || ""}
+                                onChange={(e) => updateMixedPart(p.id, { start: e.target.value, hours: calcHours(e.target.value, p.end) })}
+                                className="w-full text-[14px] font-bold bg-transparent outline-none"
+                                style={{ color: "#101A46" }}
+                              />
+                            </div>
+                            <span className="material-symbols-outlined text-[15px]" style={{ color: "#8892b0" }}>arrow_forward</span>
+                            <div className="ddm-field flex-1 rounded-xl px-2.5 py-1.5" style={{ background: "#fff", border: "1px solid #e4e1e6" }}>
+                              <label className="text-[9px] font-bold block" style={{ color: "#8892b0" }}>יציאה</label>
+                              <input
+                                type="time"
+                                value={p.end || ""}
+                                onChange={(e) => updateMixedPart(p.id, { end: e.target.value, hours: calcHours(p.start, e.target.value) })}
+                                className="w-full text-[14px] font-bold bg-transparent outline-none"
+                                style={{ color: "#101A46" }}
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-2">
+                            <div className="flex gap-1.5 flex-wrap">
+                              {MIXED_FRACTIONS.map((f) => (
+                                <button
+                                  key={f}
+                                  type="button"
+                                  onClick={() => updateMixedPart(p.id, { hours: fractionMultiplier(f) * target })}
+                                  className="h-8 px-2.5 rounded-lg text-[11px] font-bold"
+                                  style={{
+                                    background: Math.abs((p.hours || 0) - fractionMultiplier(f) * target) < 0.01 ? pm.grad[0] : "#fff",
+                                    color: Math.abs((p.hours || 0) - fractionMultiplier(f) * target) < 0.01 ? "#fff" : pm.grad[0],
+                                  }}
+                                >
+                                  {FRACTION_LABEL[f]}
+                                </button>
+                              ))}
+                              {i > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => updateMixedPart(p.id, { hours: remaining })}
+                                  className="h-8 px-2.5 rounded-lg text-[11px] font-bold"
+                                  style={{ background: Math.abs((p.hours || 0) - remaining) < 0.01 ? pm.grad[0] : "#fff", color: Math.abs((p.hours || 0) - remaining) < 0.01 ? "#fff" : pm.grad[0] }}
+                                >
+                                  שאר היום ({formatHM(remaining)})
+                                </button>
+                              )}
+                            </div>
+                            <div className="ddm-field rounded-xl px-2.5 py-1.5" style={{ background: "#fff", border: "1px solid #e4e1e6" }}>
+                              <label className="text-[9px] font-bold block" style={{ color: "#8892b0" }}>או הזנה מדויקת (שעות)</label>
+                              <input
+                                type="number"
+                                step="0.25"
+                                min="0"
+                                value={p.hours || ""}
+                                onChange={(e) => updateMixedPart(p.id, { hours: parseFloat(e.target.value) || 0 })}
+                                className="w-full text-[14px] font-bold bg-transparent outline-none"
+                                style={{ color: "#101A46" }}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {(p.category === "vacation" || p.category === "sick") && (
+                          <label className="flex items-center justify-between gap-2 px-1">
+                            <span className="text-[11px] font-medium" style={{ color: "#101A46" }}>{p.paid !== false ? "משולם" : "לא משולם"}</span>
+                            <input type="checkbox" checked={p.paid !== false} onChange={(e) => updateMixedPart(p.id, { paid: e.target.checked })} className="w-4 h-4 accent-[#16A34A]" />
+                          </label>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {mixedAvailableCategories.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {mixedAvailableCategories.map((c) => {
+                        const m = STATUS_META[c];
+                        return (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => addMixedPart(c)}
+                            className="h-9 px-3 rounded-lg text-[12px] font-bold flex items-center gap-1.5"
+                            style={{ background: m.tint, color: m.grad[0] }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{m.icon}</span>+ {m.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="text-[11px] font-bold px-1" style={{ color: mixedTotalHours > target + 0.01 ? "#DC2626" : "#46464f" }}>
+                    סה"כ {formatHM(mixedTotalHours)} מתוך {formatHM(target)} שעות יעד
+                  </div>
+                </div>
+              ) : status === "worked" ? (
                 <div className="relative z-10 flex flex-col gap-4">
                   {draft.segments && draft.segments.length > 1 ? (
                     <div className="flex flex-col gap-3">

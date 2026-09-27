@@ -203,6 +203,18 @@ export default function DesignPreview() {
       // work days yet, so they must never inflate the month's deficit target.
       if (settings.employment_start_date && ds < settings.employment_start_date) continue;
       const entryForDay = workHours.find((w) => w.date === ds);
+      // A "יום מגוון" (mixed) day is always fully accounted for already — every hour is explicitly
+      // assigned to a category by the user — so it credits the pace tracker net-zero (its own
+      // target = its own worked/credited sum) rather than risking a false deficit/overtime badge
+      // from trying to compare it against a single plain status.
+      if (entryForDay?.dayParts?.length) {
+        const isTodayMixed = isCurrentRealMonth && d === realToday.getDate();
+        if (isTodayMixed && isClockedIn) continue;
+        const t = getEffectiveDailyTarget(ds, entryForDay, settings);
+        targetSum += t;
+        workedSum += t;
+        continue;
+      }
       const status = entryForDay?.status;
       if (status && status !== "worked" && status !== "holiday") continue;
       const isToday = isCurrentRealMonth && d === realToday.getDate();
@@ -1101,7 +1113,8 @@ export default function DesignPreview() {
               {recentDays.map((entry) => {
                 const date = new Date(`${entry.date}T00:00:00`);
                 const isToday = entry.date === todayStr;
-                const isOff = entry.status === "sick" || entry.status === "vacation" || entry.status === "holiday" || entry.status === "off";
+                const isMixed = !!entry.dayParts?.length;
+                const isOff = !isMixed && (entry.status === "sick" || entry.status === "vacation" || entry.status === "holiday" || entry.status === "off");
                 const statusMeta = isOff ? STATUS_META[entry.status as DayStatus] : null;
                 const target = getEffectiveDailyTarget(entry.date, entry, settings);
                 const worked = getCountedHours(entry);
@@ -1110,7 +1123,7 @@ export default function DesignPreview() {
                 // long yet — getCountedHours deliberately returns 0 for the running segment, so
                 // showing "חוסר" against the FULL daily target here would flag every single open
                 // shift as maximally short the instant it starts, which is exactly backwards.
-                const isInProgress = (entry.status === "worked" || !entry.status) && !!entry.start_time && !entry.end_time;
+                const isInProgress = !isMixed && (entry.status === "worked" || !entry.status) && !!entry.start_time && !entry.end_time;
                 return (
                   <div
                     key={entry.date}
@@ -1123,19 +1136,34 @@ export default function DesignPreview() {
                       <span className="text-[16px] font-bold" style={{ color: "#101A46" }}>{date.getDate()} ב{MONTH_HE[date.getMonth()]}</span>
                       <span
                         className="text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5"
-                        style={{ color: statusMeta ? statusMeta.grad[0] : isToday ? "#7639FF" : "#46464f" }}
+                        style={{ color: isMixed ? "#7639FF" : statusMeta ? statusMeta.grad[0] : isToday ? "#7639FF" : "#46464f" }}
                       >
+                        {isMixed && <span className="material-symbols-outlined" style={{ fontSize: 13 }}>grid_view</span>}
                         {statusMeta && <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{statusMeta.icon}</span>}
-                        {isOff
-                          ? `${isToday ? "היום · " : ""}${statusMeta?.label}`
-                          : isToday
-                            ? "היום"
-                            : WEEKDAY_HE_LONG[date.getDay()]}
+                        {isMixed
+                          ? `${isToday ? "היום · " : ""}יום מגוון`
+                          : isOff
+                            ? `${isToday ? "היום · " : ""}${statusMeta?.label}`
+                            : isToday
+                              ? "היום"
+                              : WEEKDAY_HE_LONG[date.getDay()]}
                       </span>
                     </div>
                     <div className="flex items-center gap-5">
-                      <div className="flex flex-col items-end">
-                        {!isOff && (
+                      <div className="flex flex-col items-end gap-1">
+                        {isMixed && (
+                          <div className="flex flex-wrap gap-1 justify-end max-w-[170px]">
+                            {entry.dayParts!.map((p, i) => {
+                              const pm = STATUS_META[p.category];
+                              return (
+                                <span key={p.id || i} className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ color: pm.grad[0], background: pm.tint }}>
+                                  {pm.label} {formatHM(p.hours || 0)}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {!isOff && !isMixed && (
                           <span className="text-[13px] font-medium text-[#46464f] tabular-nums" dir="ltr">
                             {entry.segments && entry.segments.length > 1
                               ? entry.segments.map((seg) => `${seg.start}-${seg.end ?? "?"}`).join(", ")
@@ -1147,12 +1175,12 @@ export default function DesignPreview() {
                             במהלך המשמרת
                           </span>
                         )}
-                        {!isOff && !isInProgress && diff > 0.01 && (
+                        {!isOff && !isMixed && !isInProgress && diff > 0.01 && (
                           <span className="text-[11px] font-bold px-2 py-0.5 rounded mt-0.5" style={{ color: "#003DAA", background: "rgba(0,61,170,0.05)" }}>
                             <span dir="ltr">{formatHM(diff)}+</span> עודף
                           </span>
                         )}
-                        {!isOff && !isInProgress && diff < -0.01 && !entry.deficitCoveredBy && (
+                        {!isOff && !isMixed && !isInProgress && diff < -0.01 && !entry.deficitCoveredBy && (
                           <span className="text-[11px] font-bold px-2 py-0.5 rounded mt-0.5" style={{ color: "#ba1a1a", background: "rgba(186,26,26,0.05)" }}>
                             <span dir="ltr">{formatHM(-diff)}-</span> חוסר
                           </span>

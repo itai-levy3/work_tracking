@@ -148,9 +148,12 @@ const toDbWorkHour = (w: WorkHour, userId: string) => ({
   fraction: w.fraction ?? null,
   paid: w.paid ?? null,
   deficit_covered_by: w.deficitCoveredBy ?? null,
+  remainder_paid: w.remainderPaid ?? null,
+  leave_hours: w.leaveHours ?? null,
   evening: !!w.evening,
   note: w.note ?? null,
   one_time_planned_hours: w.oneTimePlannedHours ?? null,
+  day_parts: w.dayParts ?? null,
 });
 
 // Postgres' time columns round-trip as "HH:MM:SS" — trim to "HH:MM" to match what the app itself
@@ -168,9 +171,12 @@ const fromDbWorkHour = (row: any): WorkHour => ({
   fraction: row.fraction ?? undefined,
   paid: row.paid ?? undefined,
   deficitCoveredBy: row.deficit_covered_by ?? undefined,
+  remainderPaid: row.remainder_paid ?? undefined,
+  leaveHours: row.leave_hours != null ? Number(row.leave_hours) : undefined,
   evening: row.evening ?? undefined,
   note: row.note ?? undefined,
   oneTimePlannedHours: row.one_time_planned_hours != null ? Number(row.one_time_planned_hours) : undefined,
+  dayParts: row.day_parts ?? undefined,
 });
 
 export const pushWorkHour = async (workHour: WorkHour): Promise<void> => {

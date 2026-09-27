@@ -88,6 +88,31 @@ export interface WorkHour {
    * every hour worked counts as overtime, matching a genuinely unscheduled work day.
    */
   oneTimePlannedHours?: number;
+  /**
+   * A day split into several independent categories at once — e.g. 3/4 מחלה + 1/4 חג, or worked
+   * the morning + vacation the rest — built by the "יום מגוון" editor. When set, this is the
+   * single source of truth for the day (status/fraction/leaveHours above are ignored entirely) and
+   * every part is accounted for on its own terms: its own balance deduction, its own paid/unpaid
+   * treatment. A mixed day never earns overtime — like the older single-leave split-day flow, its
+   * worked hours are always paid at the plain rate, since these are irregular days, not the
+   * ordinary attendance-tracking flow overtime tiers were built for.
+   */
+  dayParts?: DayPart[];
+}
+
+/** One category-slice of a "mixed day" (יום מגוון). Only ever read when WorkHour.dayParts is set. */
+export interface DayPart {
+  id: string;
+  category: DayStatus;
+  /** Resolved duration in hours — the single source of truth for this slice, however it was
+   * entered (exact clock times or a day-fraction of the daily target). */
+  hours: number;
+  /** Present only when this slice was entered via exact clock times (for display, not accounting). */
+  start?: string | null;
+  end?: string | null;
+  /** Meaningful only for vacation/sick — "worked" is always paid, "holiday" is always paid in
+   * full, and "off" is always unpaid, exactly like a plain single-status day. */
+  paid?: boolean;
 }
 
 /** Formats a decimal hours value as "H:MM" (e.g. 8.75 -> "8:45"), never a decimal point. */
@@ -738,6 +763,9 @@ export const calcHoursBetween = (start: string | null | undefined, end: string |
 
 export const getCountedHours = (entry: WorkHour | undefined): number => {
   if (!entry) return 0;
+  if (entry.dayParts && entry.dayParts.length > 0) {
+    return entry.dayParts.reduce((sum, p) => sum + (p.hours || 0), 0);
+  }
   const status = entry.status || "worked";
   if (status === "worked" && entry.start_time && !entry.end_time) {
     // Currently mid-shift: count whatever earlier segments already completed today, but not the
@@ -765,6 +793,14 @@ export const computeLeaveUsage = (year: number, type: "vacation" | "sick", setti
   let used = 0;
   for (const w of entries) {
     if (w.date > asOfDateKey) continue;
+    if (w.dayParts && w.dayParts.length > 0) {
+      const target = getEffectiveDailyTarget(w.date, w, settings);
+      if (target <= 0) continue;
+      for (const p of w.dayParts) {
+        if (p.category === type) used += Math.min(1, Math.max(0, (p.hours || 0) / target));
+      }
+      continue;
+    }
     if (w.status === type) {
       used += effectiveDayFraction(w, getEffectiveDailyTarget(w.date, w, settings));
     } else if (type === "vacation" && w.status === "holiday" && w.remainderPaid !== false) {
@@ -1046,6 +1082,38 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
   const perDay: DayPayBreakdown[] = [];
 
   for (const w of entries) {
+    if (w.dayParts && w.dayParts.length > 0) {
+      // Generalizes the isOff branch below to N independent category-slices instead of one status:
+      // each slice is accounted for on its own terms, and every paid slice (worked, holiday, or a
+      // paid vacation/sick/off slice) is summed into one plain regular-pay total — a mixed day
+      // never earns overtime, matching the older single-leave split-day flow.
+      const target = getEffectiveDailyTarget(w.date, w, settings);
+      let dayPaidHours = 0;
+      let hasWorkedPart = false;
+      for (const p of w.dayParts) {
+        const hours = p.hours || 0;
+        if (hours <= 0) continue;
+        if (p.category === "worked") {
+          hasWorkedPart = true;
+          dayPaidHours += hours;
+        } else if (p.category === "holiday") {
+          dayPaidHours += hours;
+          if (target > 0) holidayDays += Math.min(1, hours / target);
+        } else if (p.category === "off") {
+          if (target > 0) unpaidOffDays += Math.min(1, hours / target);
+        } else if (p.paid === false) {
+          if (target > 0) unpaidLeaveDays += Math.min(1, hours / target);
+        } else {
+          dayPaidHours += hours;
+        }
+      }
+      if (dayPaidHours > 0) {
+        regularHours += dayPaidHours;
+        regularPay += dayPaidHours * baseRate;
+      }
+      if (hasWorkedPart) daysWorked += 1;
+      continue;
+    }
     const isOff = w.status === "sick" || w.status === "vacation" || w.status === "holiday" || w.status === "off";
     if (isOff) {
       // hours_worked always gets paid, whatever it represents: a fully paid leave day's target
