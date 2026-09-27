@@ -509,8 +509,6 @@ export default function DesignPreview() {
         .kpi-rise { animation: kpi-rise .6s cubic-bezier(.16,1,.3,1) both; }
         @keyframes kpi-rise { from { opacity: 0; transform: translateY(10px) scale(0.9); } to { opacity: 1; transform: translateY(0) scale(1); } }
         @keyframes kpi-spin { to { transform: rotate(360deg); } }
-        .kpi-dot { animation: kpi-pulse 2.2s ease-in-out infinite; }
-        @keyframes kpi-pulse { 0%,100% { transform: translate(-50%,-50%) scale(1); } 50% { transform: translate(-50%,-50%) scale(1.5); } }
         .kpi-orbit { animation: kpi-orbit-spin 22s linear infinite; }
         @keyframes kpi-orbit-spin { to { transform: rotate(360deg); } }
         .kpi-sparkle { animation: kpi-twinkle 2.6s ease-in-out infinite; }
@@ -822,9 +820,6 @@ export default function DesignPreview() {
                 const r = 43;
                 const c = 2 * Math.PI * r;
                 const dashoffset = c * (1 - k.percent / 100);
-                const theta = (k.percent / 100) * 2 * Math.PI;
-                const dotX = 50 + r * Math.sin(theta);
-                const dotY = 50 - r * Math.cos(theta);
                 const isActive = activeKpi === i;
                 return (
                   <div
@@ -872,9 +867,7 @@ export default function DesignPreview() {
                             </defs>
                             <circle cx="50" cy="50" r={r} fill="none" stroke={k.trackTint} strokeWidth="6" />
                             <circle cx="50" cy="50" r={r} fill="none" stroke={`url(#kpiGrad${i})`} strokeDasharray={c} strokeDashoffset={dashoffset} strokeLinecap="round" strokeWidth="6.5" style={{ filter: `drop-shadow(0 2px 5px ${k.glow})` }} />
-                            <circle cx="50" cy="50" r={r} fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeDasharray={`${c * 0.16} ${c}`} strokeDashoffset={c * 0.06} opacity="0.75" style={{ filter: "blur(1.2px)" }} />
                           </svg>
-                          <div className="kpi-dot absolute rounded-full" style={{ width: 9, height: 9, left: `${dotX}%`, top: `${dotY}%`, background: k.grad[1], boxShadow: `0 0 8px 3px ${k.glow}, 0 0 16px 6px ${k.glow}` }} />
                           <div className="absolute inset-[6px] rounded-full" style={{ background: "rgba(255,255,255,0.55)", backdropFilter: "blur(6px)", boxShadow: "inset 0 3px 6px rgba(35,50,100,0.06), inset 0 -1px 2px rgba(255,255,255,0.8)" }} />
                           <span
                             className="tabular-nums relative z-10 leading-none"

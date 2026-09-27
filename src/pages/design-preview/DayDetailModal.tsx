@@ -413,19 +413,24 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
       <RxDialog.Portal>
         <style>{modalStyle}</style>
         <RxDialog.Overlay className="ddm-overlay fixed inset-0 z-50" style={{ background: "rgba(16,26,70,0.5)", backdropFilter: "blur(4px)" }} />
-        <RxDialog.Content
-          dir="rtl"
-          className="fixed inset-0 z-50 flex flex-col items-center outline-none px-6 py-8"
-          style={{ overflowY: "auto" }}
-        >
-          <div className="ddm-header-in flex items-center gap-3 mb-5 px-5 py-2 rounded-full" style={{ background: "rgba(255,255,255,0.85)", backdropFilter: "blur(20px)", boxShadow: "0 10px 30px -10px rgba(16,26,70,0.25)" }}>
-            <RxDialog.Title className="text-[15px] font-bold" style={{ color: "#101A46" }}>
-              {date.getDate()} ב{MONTH_HE[date.getMonth()]} · {WEEKDAY_HE_LONG[date.getDay()]}
-            </RxDialog.Title>
-            <RxDialog.Close className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(35,50,100,0.08)", color: "#8892b0" }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
-            </RxDialog.Close>
-          </div>
+        <RxDialog.Content dir="rtl" className="fixed inset-0 z-50 flex items-center justify-center outline-none p-0" style={{ overscrollBehavior: "contain" }}>
+          {/*
+            The ENTIRE dialog used to sit inside a `fixed inset-0` flex box that scrolled itself —
+            on some mobile browsers a fixed-position ancestor's own overflow never actually receives
+            touch-scroll input (the gesture falls through / gets eaten by the dialog's scroll-lock),
+            leaving taller content (like the mixed-day editor) with no way to reach a save button
+            below the fold. This inner div is a normal, non-fixed, height-capped block instead — a
+            pattern that reliably scrolls everywhere — while the outer Content just centers it.
+          */}
+          <div className="w-full h-full overflow-y-auto flex flex-col items-center px-6 py-8" style={{ WebkitOverflowScrolling: "touch" }}>
+            <div className="ddm-header-in flex items-center gap-3 mb-5 px-5 py-2 rounded-full shrink-0" style={{ background: "rgba(255,255,255,0.85)", backdropFilter: "blur(20px)", boxShadow: "0 10px 30px -10px rgba(16,26,70,0.25)" }}>
+              <RxDialog.Title className="text-[15px] font-bold" style={{ color: "#101A46" }}>
+                {date.getDate()} ב{MONTH_HE[date.getMonth()]} · {WEEKDAY_HE_LONG[date.getDay()]}
+              </RxDialog.Title>
+              <RxDialog.Close className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(35,50,100,0.08)", color: "#8892b0" }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+              </RxDialog.Close>
+            </div>
 
           {!editing && hasSavedData && entry?.dayParts?.length ? (
             // ---- "יום מגוון" summary — several independent category-slices, shown as a stack of chips ----
@@ -1273,6 +1278,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
               )}
             </div>
           )}
+          </div>
         </RxDialog.Content>
       </RxDialog.Portal>
     </RxDialog.Root>
