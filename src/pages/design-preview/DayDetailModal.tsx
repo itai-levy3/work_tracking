@@ -219,6 +219,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
   const hasSavedData =
     !!entry &&
     (getCountedHours(entry) > 0 || !!entry.start_time || (entry.status && entry.status !== "worked") || !!entry.note || !!entry.dayParts?.length);
+  const isEditView = editing || !hasSavedData;
 
   // ---- "יום מגוון" (mixed day) helpers ----
   const mixedAvailableCategories = MIXED_CATEGORY_ORDER.filter((c) => !mixedParts.some((p) => p.category === c));
@@ -413,16 +414,13 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
       <RxDialog.Portal>
         <style>{modalStyle}</style>
         <RxDialog.Overlay className="ddm-overlay fixed inset-0 z-50" style={{ background: "rgba(16,26,70,0.5)", backdropFilter: "blur(4px)" }} />
-        <RxDialog.Content dir="rtl" className="fixed inset-0 z-50 flex items-center justify-center outline-none p-0" style={{ overscrollBehavior: "contain" }}>
-          {/*
-            The ENTIRE dialog used to sit inside a `fixed inset-0` flex box that scrolled itself —
-            on some mobile browsers a fixed-position ancestor's own overflow never actually receives
-            touch-scroll input (the gesture falls through / gets eaten by the dialog's scroll-lock),
-            leaving taller content (like the mixed-day editor) with no way to reach a save button
-            below the fold. This inner div is a normal, non-fixed, height-capped block instead — a
-            pattern that reliably scrolls everywhere — while the outer Content just centers it.
-          */}
-          <div className="w-full h-full overflow-y-auto flex flex-col items-center px-6 py-8" style={{ WebkitOverflowScrolling: "touch" }}>
+        <RxDialog.Content dir="rtl" className="fixed inset-0 z-50 flex flex-col outline-none p-0" style={{ overscrollBehavior: "contain" }}>
+          {/* Scrollable body. When editing, the save button is NOT in here — it lives in the fixed
+              footer below, so it's always on screen no matter how tall the form gets. */}
+          <div
+            className={`flex-1 min-h-0 w-full overflow-y-auto flex flex-col items-center px-6 pt-8 ${isEditView ? "pb-6" : "pb-8"}`}
+            style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
+          >
             <div className="ddm-header-in flex items-center gap-3 mb-5 px-5 py-2 rounded-full shrink-0" style={{ background: "rgba(255,255,255,0.85)", backdropFilter: "blur(20px)", boxShadow: "0 10px 30px -10px rgba(16,26,70,0.25)" }}>
               <RxDialog.Title className="text-[15px] font-bold" style={{ color: "#101A46" }}>
                 {date.getDate()} ב{MONTH_HE[date.getMonth()]} · {WEEKDAY_HE_LONG[date.getDay()]}
@@ -1256,18 +1254,6 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                 />
               </div>
 
-              <button
-                onClick={() => save()}
-                className="ddm-save relative z-10 w-full h-12 rounded-2xl font-bold text-white mt-1"
-                style={
-                  mixedMode
-                    ? { background: "linear-gradient(155deg, #7639FF, #00D2FF)", boxShadow: "0 14px 30px -10px rgba(118,57,255,0.5)" }
-                    : { background: `linear-gradient(155deg, ${meta.grad[0]}, ${meta.grad[1]})`, boxShadow: `0 14px 30px -10px ${meta.glow}` }
-                }
-              >
-                שמירה
-              </button>
-
               {/* Available for any day that exists in storage at all — including a day that only
                   has a clock-in, or was cleared to blank — so it can always be removed entirely. */}
               {!!entry && (
@@ -1283,6 +1269,31 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
             </div>
           )}
           </div>
+
+          {/* Fixed footer — the save button is always visible at the bottom of the screen while
+              editing, so reaching it never depends on scrolling a long form (e.g. יום מגוון). */}
+          {isEditView && (
+            <div
+              className="shrink-0 w-full px-6 pt-3 flex justify-center"
+              style={{
+                paddingBottom: "max(16px, env(safe-area-inset-bottom))",
+                background: "linear-gradient(to top, rgba(248,250,255,0.98) 70%, rgba(248,250,255,0))",
+              }}
+            >
+              <button
+                onClick={() => save()}
+                className="ddm-save w-full max-w-[380px] h-[52px] rounded-2xl font-bold text-white text-[16px] flex items-center justify-center gap-2"
+                style={
+                  mixedMode
+                    ? { background: "linear-gradient(155deg, #7639FF, #00D2FF)", boxShadow: "0 14px 30px -10px rgba(118,57,255,0.5)" }
+                    : { background: `linear-gradient(155deg, ${meta.grad[0]}, ${meta.grad[1]})`, boxShadow: `0 14px 30px -10px ${meta.glow}` }
+                }
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 20 }}>check</span>
+                שמירה
+              </button>
+            </div>
+          )}
         </RxDialog.Content>
       </RxDialog.Portal>
     </RxDialog.Root>
