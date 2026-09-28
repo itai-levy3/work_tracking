@@ -221,6 +221,192 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
     (getCountedHours(entry) > 0 || !!entry.start_time || (entry.status && entry.status !== "worked") || !!entry.note || !!entry.dayParts?.length);
   const isEditView = editing || !hasSavedData;
 
+  // ---- "יום מגוון" summary: the same clock orb as a regular day, but its face is split into
+  // colored slices — one per category, sized by that category's share of the day. ----
+  const mixedClock = (() => {
+    if (!entry?.dayParts?.length) return null;
+    const parts = entry.dayParts.filter((p) => (p.hours || 0) > 0);
+    if (parts.length === 0) return null;
+    const total = parts.reduce((s, p) => s + p.hours, 0);
+    const denom = Math.max(total, target, 0.0001);
+    let acc = 0;
+    const slices = parts.map((p) => {
+      const m = STATUS_META[p.category];
+      const from = acc;
+      acc += (p.hours / denom) * 360;
+      return { part: p, meta: m, from, to: acc };
+    });
+    // Hours not assigned to any category yet (total below the daily target) show as a neutral slice.
+    const unassignedHours = Math.max(0, target - total);
+    const hasGap = acc < 359.5;
+    const stops = slices.flatMap((s) => [`${s.meta.grad[1]} ${s.from}deg`, `${s.meta.grad[0]} ${s.to}deg`]);
+    if (hasGap) stops.push(`#CBD1E1 ${acc}deg`, `#CBD1E1 360deg`);
+    const conic = `conic-gradient(from 0deg, ${stops.join(", ")})`;
+    const dividerAngles = slices.length > 1 || hasGap ? [...slices.map((s) => s.from), ...(hasGap ? [acc] : [])] : [];
+    const largest = slices.reduce((a, b) => (b.part.hours > a.part.hours ? b : a));
+    return { slices, total, unassignedHours, conic, dividerAngles, largest };
+  })();
+
+  const describeShare = (hours: number, start?: string | null, end?: string | null) => {
+    if (start && end) return `${start} – ${end}`;
+    if (target <= 0) return "";
+    const ratio = hours / target;
+    const near = (v: number) => Math.abs(ratio - v) < 0.01;
+    if (near(1)) return "יום מלא";
+    if (near(0.75)) return "3/4 יום";
+    if (near(0.5)) return "חצי יום";
+    if (near(0.25)) return "רבע יום";
+    return `${Math.round(ratio * 100)}% מהיום`;
+  };
+
+  /** The circular clock orb — shared by a regular day and a "יום מגוון" day so both read as the same clock. */
+  const renderClockOrb = (o: {
+    accent: string;
+    glow: string;
+    particleColors: string[];
+    satelliteColors: string[];
+    ringBackground: string;
+    orbBackground: string;
+    dividerAngles?: number[];
+    icon: string;
+    hero: string;
+    heroSize: number;
+    label: string;
+  }) => (
+    <div className="relative flex items-center justify-center" style={{ width: 320, height: 320 }}>
+      {/* Opening shockwave + staggered ripple rings */}
+      <div className="ddm-shockwave absolute rounded-full pointer-events-none" style={{ width: 250, height: 250, border: `3px solid ${o.accent}` }} />
+      {[0, 0.13, 0.26, 0.39].map((d) => (
+        <div key={d} className="ddm-ripple absolute rounded-full pointer-events-none" style={{ width: 250, height: 250, border: `2px solid ${o.accent}`, animationDelay: `${d}s` }} />
+      ))}
+      {/* Particle burst */}
+      {PARTICLES.map((p, i) => (
+        <div
+          key={i}
+          className="ddm-particle absolute rounded-full pointer-events-none"
+          style={{
+            width: p.size,
+            height: p.size,
+            background: o.particleColors[i % o.particleColors.length],
+            animationDelay: `${p.delay}s`,
+            boxShadow: `0 0 6px 1px ${o.glow}`,
+            ["--px" as string]: `${p.x}px`,
+            ["--py" as string]: `${p.y}px`,
+          }}
+        />
+      ))}
+      {/* Continuously orbiting satellites */}
+      <div className="ddm-satellites absolute inset-0 pointer-events-none">
+        {SATELLITES.map((angle, idx) => (
+          <div
+            key={angle}
+            className="ddm-satellite-dot absolute rounded-full"
+            style={{
+              width: 7,
+              height: 7,
+              top: "50%",
+              left: "50%",
+              background: o.satelliteColors[idx % o.satelliteColors.length],
+              boxShadow: `0 0 10px 3px ${o.glow}`,
+              transform: `rotate(${angle}deg) translateX(152px) rotate(-${angle}deg)`,
+            }}
+          />
+        ))}
+      </div>
+      <div className="ddm-orb-glow absolute rounded-full pointer-events-none" style={{ width: 292, height: 292, background: `radial-gradient(circle, ${o.glow}, transparent 70%)`, filter: "blur(26px)" }} />
+      <div className="ddm-orb-ring absolute rounded-full" style={{ width: 262, height: 262, background: o.ringBackground, opacity: 0.55 }} />
+      <div className="ddm-orb-breathe">
+        <div
+          className="ddm-orb relative rounded-full flex flex-col items-center justify-center overflow-hidden"
+          style={{
+            width: 250,
+            height: 250,
+            background: o.orbBackground,
+            boxShadow: `0 30px 70px -10px ${o.glow}, inset 0 3px 8px rgba(255,255,255,0.5), inset 0 -12px 24px rgba(0,0,0,0.14)`,
+          }}
+        >
+          <div className="absolute -left-10 -bottom-12 w-44 h-44 rounded-full pointer-events-none" style={{ background: "rgba(255,255,255,0.1)" }} />
+
+          {/* Clock-face tick marks — this orb documents hours, so it reads like a watch face */}
+          <svg className="absolute inset-0" viewBox="0 0 250 250" style={{ opacity: 0.55 }}>
+            {Array.from({ length: 12 }).map((_, i) => {
+              const angle = (i / 12) * 2 * Math.PI - Math.PI / 2;
+              const isMajor = i % 3 === 0;
+              const inner = isMajor ? 98 : 106;
+              const outer = 116;
+              return (
+                <line
+                  key={i}
+                  x1={125 + Math.cos(angle) * inner}
+                  y1={125 + Math.sin(angle) * inner}
+                  x2={125 + Math.cos(angle) * outer}
+                  y2={125 + Math.sin(angle) * outer}
+                  stroke="rgba(255,255,255,0.85)"
+                  strokeWidth={isMajor ? 3 : 1.5}
+                  strokeLinecap="round"
+                />
+              );
+            })}
+          </svg>
+          {/* Crisp white dividers between a mixed day's slices, like the edges of pie pieces */}
+          {o.dividerAngles && o.dividerAngles.length > 0 && (
+            <svg className="absolute inset-0" viewBox="0 0 250 250">
+              {o.dividerAngles.map((deg) => {
+                const rad = (deg * Math.PI) / 180;
+                return (
+                  <line
+                    key={deg}
+                    x1={125 + Math.sin(rad) * 100}
+                    y1={125 - Math.cos(rad) * 100}
+                    x2={125 + Math.sin(rad) * 126}
+                    y2={125 - Math.cos(rad) * 126}
+                    stroke="#fff"
+                    strokeWidth={3.5}
+                    strokeLinecap="round"
+                  />
+                );
+              })}
+            </svg>
+          )}
+          {/* Sweeping clock hand — continuous, slow, purely decorative motion */}
+          <div className="absolute inset-0 ddm-clock-sweep">
+            <div
+              className="absolute rounded-full"
+              style={{ width: 3, height: 84, top: "50%", left: "50%", marginTop: -84, marginLeft: -1.5, transformOrigin: "50% 100%", background: "linear-gradient(to top, rgba(255,255,255,0.95), rgba(255,255,255,0.05))" }}
+            />
+          </div>
+          <div className="absolute rounded-full" style={{ width: 8, height: 8, top: "50%", left: "50%", marginTop: -4, marginLeft: -4, background: "#fff", boxShadow: "0 0 8px rgba(255,255,255,0.9)" }} />
+
+          {/* Glossy diagonal shimmer sweep */}
+          <div
+            className="ddm-orb-shimmer absolute pointer-events-none"
+            style={{ width: 70, height: 380, top: -70, left: 108, background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.6), transparent)", filter: "blur(4px)" }}
+          />
+          <div className="ddm-orb-badge absolute top-6 flex items-center justify-center rounded-full" style={{ width: 46, height: 46, background: "rgba(255,255,255,0.3)", boxShadow: "0 6px 14px rgba(0,0,0,0.12)" }}>
+            <span className="material-symbols-outlined text-white" style={{ fontSize: 24 }}>{o.icon}</span>
+          </div>
+          <span
+            className="relative z-10 text-white leading-none"
+            style={{
+              fontFamily: "'Space Grotesk', 'Bricolage Grotesque', system-ui, sans-serif",
+              fontSize: o.heroSize,
+              fontWeight: 700,
+              letterSpacing: "-0.045em",
+              fontVariantNumeric: "tabular-nums",
+              marginTop: 14,
+              textShadow: "0 3px 16px rgba(0,0,0,0.3)",
+            }}
+          >
+            {o.hero}
+          </span>
+          <span className="relative z-10 text-white text-[12px] font-bold uppercase tracking-[0.2em] mt-2.5" style={{ textShadow: "0 1px 6px rgba(0,0,0,0.3)" }}>
+            {o.label}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+
   // ---- "יום מגוון" (mixed day) helpers ----
   const mixedAvailableCategories = MIXED_CATEGORY_ORDER.filter((c) => !mixedParts.some((p) => p.category === c));
   const mixedTotalHours = mixedParts.reduce((s, p) => s + (p.hours || 0), 0);
@@ -430,44 +616,63 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
               </RxDialog.Close>
             </div>
 
-          {!editing && hasSavedData && entry?.dayParts?.length ? (
-            // ---- "יום מגוון" summary — several independent category-slices, shown as a stack of chips ----
-            <div className="shrink-0 flex flex-col items-center gap-5 w-full max-w-[360px]">
-              <div className="flex flex-col items-center gap-1">
-                <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 14px 30px -10px rgba(118,57,255,0.45)" }}>
-                  <span className="material-symbols-outlined text-white" style={{ fontSize: 28 }}>grid_view</span>
-                </div>
-                <span className="text-[13px] font-bold uppercase tracking-wider mt-1" style={{ color: "#7639FF" }}>יום מגוון</span>
-                <span className="text-[30px] font-bold tabular-nums" style={{ color: "#101A46", fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
-                  {formatHM(entry.dayParts.reduce((s, p) => s + (p.hours || 0), 0))}
-                </span>
-              </div>
-              <div className="flex flex-col gap-2 w-full">
-                {entry.dayParts.map((p, i) => {
-                  const pm = STATUS_META[p.category];
-                  return (
-                    <div key={p.id || i} className="flex items-center justify-between rounded-2xl px-4 py-2.5" style={{ background: pm.tint, border: `1px solid ${pm.grad[0]}33` }}>
-                      <div className="flex items-center gap-2">
-                        <span className="material-symbols-outlined" style={{ fontSize: 17, color: pm.grad[0] }}>{pm.icon}</span>
-                        <span className="text-[13px] font-bold" style={{ color: "#101A46" }}>{pm.label}</span>
-                        {p.start && p.end && (
-                          <span className="text-[11px] font-medium" dir="ltr" style={{ color: "#8892b0" }}>{p.start}-{p.end}</span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[13px] font-bold tabular-nums" style={{ color: pm.grad[0] }}>{formatHM(p.hours || 0)}</span>
-                        {(p.category === "vacation" || p.category === "sick") && (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "#fff", color: p.paid !== false ? "#16A34A" : "#DC2626" }}>
-                            {p.paid !== false ? "משולם" : "לא משולם"}
-                          </span>
-                        )}
-                      </div>
+          {!editing && hasSavedData && mixedClock ? (
+            // ---- "יום מגוון" summary — the same clock as a regular day, its face split into slices ----
+            <div className="shrink-0 flex flex-col items-center gap-6 w-full">
+              {renderClockOrb({
+                accent: mixedClock.largest.meta.grad[1],
+                glow: mixedClock.largest.meta.glow,
+                particleColors: mixedClock.slices.flatMap((s) => [s.meta.grad[0], s.meta.grad[1]]),
+                satelliteColors: mixedClock.slices.map((s) => s.meta.grad[1]),
+                ringBackground: mixedClock.conic,
+                orbBackground: `radial-gradient(circle at 30% 24%, rgba(255,255,255,0.75), rgba(255,255,255,0) 42%), radial-gradient(circle at 50% 56%, rgba(16,26,70,0.24), rgba(16,26,70,0) 58%), ${mixedClock.conic}`,
+                dividerAngles: mixedClock.dividerAngles,
+                icon: "grid_view",
+                hero: formatHM(displayedHours),
+                heroSize: 62,
+                label: "יום מגוון",
+              })}
+
+              {/* Each slice as its own "shift" card — same white card language as a regular day's entry/exit pill */}
+              <div className="ddm-pill-in flex flex-col gap-2.5 w-full max-w-[330px]">
+                {mixedClock.slices.map(({ part: p, meta: m }, i) => (
+                  <div
+                    key={p.id || i}
+                    className="flex items-center gap-3 rounded-2xl ps-3 pe-4 py-2.5"
+                    style={{ background: "#fff", border: `1.5px solid ${m.grad[1]}55`, boxShadow: `0 10px 26px -12px ${m.glow}` }}
+                  >
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: `linear-gradient(155deg, ${m.grad[0]}, ${m.grad[1]})`, boxShadow: `0 6px 14px -4px ${m.glow}` }}>
+                      <span className="material-symbols-outlined text-white" style={{ fontSize: 19 }}>{m.icon}</span>
                     </div>
-                  );
-                })}
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <span className="text-[14px] font-bold leading-tight" style={{ color: "#101A46" }}>
+                        {`משמרת ${i + 1} · ${m.label}`}
+                      </span>
+                      <span className="text-[11.5px] font-medium mt-0.5" style={{ color: "#8892b0" }}>
+                        {p.start && p.end ? <span dir="ltr">{describeShare(p.hours, p.start, p.end)}</span> : describeShare(p.hours)}
+                      </span>
+                    </div>
+                    <div className="flex flex-col items-end shrink-0">
+                      <span className="text-[20px] leading-none" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontWeight: 700, letterSpacing: "-0.02em", color: m.grad[0] }}>
+                        {formatHM(p.hours)}
+                      </span>
+                      {(p.category === "vacation" || p.category === "sick") && (
+                        <span className="text-[10px] font-bold mt-1" style={{ color: p.paid !== false ? "#16A34A" : "#DC2626" }}>
+                          {p.paid !== false ? "משולם" : "לא משולם"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {mixedClock.unassignedHours > 0.01 && (
+                  <div className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-full self-center" style={{ background: "rgba(255,255,255,0.85)" }}>
+                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#CBD1E1" }} />
+                    <span className="text-[12px] font-bold" style={{ color: "#46464f" }}>{formatHM(mixedClock.unassignedHours)} שעות עוד לא שויכו</span>
+                  </div>
+                )}
               </div>
               {draft.note && (
-                <div className="flex items-start gap-2 px-4 py-2 rounded-2xl max-w-[280px] self-center" style={{ background: "rgba(0,1,20,0.03)" }}>
+                <div className="flex items-start gap-2 px-4 py-2 rounded-2xl max-w-[280px] self-center" style={{ background: "rgba(255,255,255,0.9)" }}>
                   <span className="material-symbols-outlined text-[15px] mt-0.5 shrink-0" style={{ color: "#8892b0" }}>event_note</span>
                   <span className="text-[12.5px]" style={{ color: "#101A46" }}>{draft.note}</span>
                 </div>
@@ -496,134 +701,18 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
           ) : !editing && hasSavedData ? (
             // ---- Fully circular floating "orb" summary — no card, no corners ----
             <div className="shrink-0 flex flex-col items-center gap-6">
-              <div className="relative flex items-center justify-center" style={{ width: 320, height: 320 }}>
-                {/* Opening shockwave + staggered ripple rings */}
-                <div className="ddm-shockwave absolute rounded-full pointer-events-none" style={{ width: 250, height: 250, border: `3px solid ${meta.grad[1]}` }} />
-                {[0, 0.13, 0.26, 0.39].map((d) => (
-                  <div
-                    key={d}
-                    className="ddm-ripple absolute rounded-full pointer-events-none"
-                    style={{ width: 250, height: 250, border: `2px solid ${meta.grad[1]}`, animationDelay: `${d}s` }}
-                  />
-                ))}
-                {/* Particle burst */}
-                {PARTICLES.map((p, i) => (
-                  <div
-                    key={i}
-                    className="ddm-particle absolute rounded-full pointer-events-none"
-                    style={{
-                      width: p.size,
-                      height: p.size,
-                      background: i % 2 === 0 ? meta.grad[0] : meta.grad[1],
-                      animationDelay: `${p.delay}s`,
-                      boxShadow: `0 0 6px 1px ${meta.glow}`,
-                      ["--px" as string]: `${p.x}px`,
-                      ["--py" as string]: `${p.y}px`,
-                    }}
-                  />
-                ))}
-                {/* Continuously orbiting satellites */}
-                <div className="ddm-satellites absolute inset-0 pointer-events-none">
-                  {SATELLITES.map((angle) => (
-                    <div
-                      key={angle}
-                      className="ddm-satellite-dot absolute rounded-full"
-                      style={{
-                        width: 7,
-                        height: 7,
-                        top: "50%",
-                        left: "50%",
-                        background: meta.grad[1],
-                        boxShadow: `0 0 10px 3px ${meta.glow}`,
-                        transform: `rotate(${angle}deg) translateX(152px) rotate(-${angle}deg)`,
-                      }}
-                    />
-                  ))}
-                </div>
-                <div
-                  className="ddm-orb-glow absolute rounded-full pointer-events-none"
-                  style={{ width: 292, height: 292, background: `radial-gradient(circle, ${meta.glow}, transparent 70%)`, filter: "blur(26px)" }}
-                />
-                <div
-                  className="ddm-orb-ring absolute rounded-full"
-                  style={{ width: 262, height: 262, background: `conic-gradient(from 0deg, ${meta.grad[0]}, ${meta.grad[1]}, ${meta.grad[0]})`, opacity: 0.55 }}
-                />
-                <div className="ddm-orb-breathe">
-                  <div
-                    className="ddm-orb relative rounded-full flex flex-col items-center justify-center overflow-hidden"
-                    style={{
-                      width: 250,
-                      height: 250,
-                      background: `radial-gradient(circle at 30% 24%, rgba(255,255,255,0.95), ${meta.grad[1]} 34%, ${meta.grad[0]} 78%)`,
-                      boxShadow: `0 30px 70px -10px ${meta.glow}, inset 0 3px 8px rgba(255,255,255,0.5), inset 0 -12px 24px rgba(0,0,0,0.14)`,
-                    }}
-                  >
-                    <div className="absolute -left-10 -bottom-12 w-44 h-44 rounded-full pointer-events-none" style={{ background: "rgba(255,255,255,0.1)" }} />
-
-                    {/* Clock-face tick marks — this orb documents hours, so it reads like a watch face */}
-                    <svg className="absolute inset-0" viewBox="0 0 250 250" style={{ opacity: 0.55 }}>
-                      {Array.from({ length: 12 }).map((_, i) => {
-                        const angle = (i / 12) * 2 * Math.PI - Math.PI / 2;
-                        const isMajor = i % 3 === 0;
-                        const inner = isMajor ? 98 : 106;
-                        const outer = 116;
-                        const cx = 125;
-                        const cy = 125;
-                        return (
-                          <line
-                            key={i}
-                            x1={cx + Math.cos(angle) * inner}
-                            y1={cy + Math.sin(angle) * inner}
-                            x2={cx + Math.cos(angle) * outer}
-                            y2={cy + Math.sin(angle) * outer}
-                            stroke="rgba(255,255,255,0.85)"
-                            strokeWidth={isMajor ? 3 : 1.5}
-                            strokeLinecap="round"
-                          />
-                        );
-                      })}
-                    </svg>
-                    {/* Sweeping clock hand — continuous, slow, purely decorative motion */}
-                    <div className="absolute inset-0 ddm-clock-sweep">
-                      <div
-                        className="absolute rounded-full"
-                        style={{ width: 3, height: 84, top: "50%", left: "50%", marginTop: -84, marginLeft: -1.5, transformOrigin: "50% 100%", background: "linear-gradient(to top, rgba(255,255,255,0.95), rgba(255,255,255,0.05))" }}
-                      />
-                    </div>
-                    <div
-                      className="absolute rounded-full"
-                      style={{ width: 8, height: 8, top: "50%", left: "50%", marginTop: -4, marginLeft: -4, background: "#fff", boxShadow: "0 0 8px rgba(255,255,255,0.9)" }}
-                    />
-
-                    {/* Glossy diagonal shimmer sweep */}
-                    <div
-                      className="ddm-orb-shimmer absolute pointer-events-none"
-                      style={{ width: 70, height: 380, top: -70, left: 108, background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.6), transparent)", filter: "blur(4px)" }}
-                    />
-                    <div
-                      className="ddm-orb-badge absolute top-6 flex items-center justify-center rounded-full"
-                      style={{ width: 46, height: 46, background: "rgba(255,255,255,0.3)", boxShadow: "0 6px 14px rgba(0,0,0,0.12)" }}
-                    >
-                      <span className="material-symbols-outlined text-white" style={{ fontSize: 24 }}>{meta.icon}</span>
-                    </div>
-                    <span
-                      className="relative z-10 text-white leading-none"
-                      style={{
-                        fontFamily: "'Space Grotesk', 'Bricolage Grotesque', system-ui, sans-serif",
-                        fontSize: stillClockedIn ? 30 : 62,
-                        fontWeight: 700,
-                        letterSpacing: "-0.045em",
-                        fontVariantNumeric: "tabular-nums",
-                        marginTop: 14,
-                        textShadow: "0 3px 16px rgba(0,0,0,0.22)",
-                      }}
-                    >
-                      {stillClockedIn ? "עדיין עובד" : formatHM(displayedHours)}
-                    </span>
-                    <span className="relative z-10 text-white text-[12px] font-bold uppercase tracking-[0.2em] mt-2.5" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.2)" }}>{meta.label}</span>
-                  </div>
-                </div>
-              </div>
+              {renderClockOrb({
+                accent: meta.grad[1],
+                glow: meta.glow,
+                particleColors: [meta.grad[0], meta.grad[1]],
+                satelliteColors: [meta.grad[1]],
+                ringBackground: `conic-gradient(from 0deg, ${meta.grad[0]}, ${meta.grad[1]}, ${meta.grad[0]})`,
+                orbBackground: `radial-gradient(circle at 30% 24%, rgba(255,255,255,0.95), ${meta.grad[1]} 34%, ${meta.grad[0]} 78%)`,
+                icon: meta.icon,
+                hero: stillClockedIn ? "עדיין עובד" : formatHM(displayedHours),
+                heroSize: stillClockedIn ? 30 : 62,
+                label: meta.label,
+              })}
 
               <div className="ddm-pill-in flex flex-col items-center gap-2">
                 {draft.start_time &&
