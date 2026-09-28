@@ -434,7 +434,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
 
           {!editing && hasSavedData && entry?.dayParts?.length ? (
             // ---- "יום מגוון" summary — several independent category-slices, shown as a stack of chips ----
-            <div className="flex flex-col items-center gap-5 w-full max-w-[360px]">
+            <div className="shrink-0 flex flex-col items-center gap-5 w-full max-w-[360px]">
               <div className="flex flex-col items-center gap-1">
                 <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 14px 30px -10px rgba(118,57,255,0.45)" }}>
                   <span className="material-symbols-outlined text-white" style={{ fontSize: 28 }}>grid_view</span>
@@ -497,7 +497,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
             </div>
           ) : !editing && hasSavedData ? (
             // ---- Fully circular floating "orb" summary — no card, no corners ----
-            <div className="flex flex-col items-center gap-6">
+            <div className="shrink-0 flex flex-col items-center gap-6">
               <div className="relative flex items-center justify-center" style={{ width: 320, height: 320 }}>
                 {/* Opening shockwave + staggered ripple rings */}
                 <div className="ddm-shockwave absolute rounded-full pointer-events-none" style={{ width: 250, height: 250, border: `3px solid ${meta.grad[1]}` }} />
@@ -750,7 +750,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
           ) : (
             // ---- Compact rounded card for editing (or a blank new day) — centered, not sliding ----
             <div
-              className="ddm-card-in w-full max-w-[380px] flex flex-col gap-4 relative overflow-hidden"
+              className="ddm-card-in shrink-0 w-full max-w-[380px] flex flex-col gap-4 relative overflow-hidden"
               style={{
                 borderRadius: 40,
                 padding: "28px 24px",
@@ -817,8 +817,8 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                     return (
                       <div
                         key={p.id}
-                        className="rounded-[22px] p-3.5 flex flex-col gap-3 relative overflow-hidden"
-                        style={{ background: "#fff", boxShadow: "0 8px 22px -12px rgba(35,50,100,0.18)", borderInlineEnd: `4px solid ${pm.grad[0]}` }}
+                        className="shrink-0 rounded-[22px] p-3.5 flex flex-col gap-3 relative overflow-hidden"
+                        style={{ background: "#fff", boxShadow: "0 8px 22px -12px rgba(35,50,100,0.18)", borderInlineStart: `4px solid ${pm.grad[0]}` }}
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
@@ -1259,7 +1259,11 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
               <button
                 onClick={() => save()}
                 className="ddm-save relative z-10 w-full h-12 rounded-2xl font-bold text-white mt-1"
-                style={{ background: `linear-gradient(155deg, ${meta.grad[0]}, ${meta.grad[1]})`, boxShadow: `0 14px 30px -10px ${meta.glow}` }}
+                style={
+                  mixedMode
+                    ? { background: "linear-gradient(155deg, #7639FF, #00D2FF)", boxShadow: "0 14px 30px -10px rgba(118,57,255,0.5)" }
+                    : { background: `linear-gradient(155deg, ${meta.grad[0]}, ${meta.grad[1]})`, boxShadow: `0 14px 30px -10px ${meta.glow}` }
+                }
               >
                 שמירה
               </button>
