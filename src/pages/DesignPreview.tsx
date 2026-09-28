@@ -6,10 +6,12 @@ import {
   calcHoursBetween,
   computeCumulativeAccrued,
   computeCumulativeLeaveUsage,
+  computeEffectiveHourlyRateForMonth,
   computeMonthlyPayroll,
   computeVacationMinimumStatus,
   DayPart,
   DayStatus,
+  effectiveDayFraction,
   formatHM,
   fractionMultiplier,
   getCountedHours,
@@ -474,6 +476,29 @@ export default function DesignPreview() {
   if (loading || !settings) {
     return <LHLoadingScreen />;
   }
+
+  /** "3/4", "חצי", "1/4" for a non-full leave day — null for a full day (nothing worth calling out). */
+  const fractionLabelFor = (entry: WorkHour, target: number): string | null => {
+    if (entry.leaveHours !== undefined && target > 0) {
+      const ratio = entry.leaveHours / target;
+      if (Math.abs(ratio - 1) < 0.02) return null;
+      if (Math.abs(ratio - 0.75) < 0.02) return "3/4";
+      if (Math.abs(ratio - 0.5) < 0.02) return "חצי";
+      if (Math.abs(ratio - 0.25) < 0.02) return "1/4";
+      return `${Math.round(ratio * 100)}%`;
+    }
+    const f = entry.fraction;
+    if (!f || f === "full") return null;
+    return f === "three_quarters" ? "3/4" : f === "half" ? "חצי" : "1/4";
+  };
+  /** Exact ₪ amount lost for a given unpaid hour count on a given day — the same effective hourly
+   * rate computeRawMonthPay itself uses for that month (cap-mode aware). */
+  const unpaidAmountFor = (dateStr: string, hours: number): number => {
+    if (hours <= 0) return 0;
+    const d = new Date(`${dateStr}T00:00:00`);
+    return hours * computeEffectiveHourlyRateForMonth(d.getFullYear(), d.getMonth(), settings);
+  };
+  const moneyHe = (n: number) => `₪${Math.round(n).toLocaleString("he-IL")}`;
 
   // Sorted newest-first. `workHours` is already scoped to the viewed month, so switching months
   // naturally shows only that month's records.
@@ -1152,6 +1177,34 @@ export default function DesignPreview() {
                 // showing "חוסר" against the FULL daily target here would flag every single open
                 // shift as maximally short the instant it starts, which is exactly backwards.
                 const isInProgress = !isMixed && (entry.status === "worked" || !entry.status) && !!entry.start_time && !entry.end_time;
+                // How much of a plain (non-mixed) leave day went unpaid — either the whole request
+                // (balance was already at 0) or a declined holiday remainder — so the exact reason
+                // and the ₪ cost are always visible, never silently folded into "0 hours" alone.
+                const plainUnpaidHours = !isMixed && isOff
+                  ? entry.status === "holiday"
+                    ? entry.remainderPaid === false
+                      ? Math.max(0, target - effectiveDayFraction(entry, target) * target)
+                      : 0
+                    : entry.paid === false
+                      ? (entry.leaveHours !== undefined ? entry.leaveHours : fractionMultiplier(entry.fraction) * target)
+                      : 0
+                  : 0;
+                // A "יום מגוון" day (e.g. an overflow-split leave day) may hold two slices of the
+                // SAME category — one paid from the balance, one unpaid for the exact excess —
+                // grouped here so the card shows one "מחלה" line with its own unpaid sub-line,
+                // instead of two same-labeled chips that don't read as a single request.
+                const mixedGroups = isMixed
+                  ? (() => {
+                      const map = new Map<string, { total: number; unpaid: number }>();
+                      for (const p of entry.dayParts!) {
+                        const g = map.get(p.category) || { total: 0, unpaid: 0 };
+                        g.total += p.hours || 0;
+                        if (p.paid === false) g.unpaid += p.hours || 0;
+                        map.set(p.category, g);
+                      }
+                      return [...map.entries()] as [DayStatus, { total: number; unpaid: number }][];
+                    })()
+                  : [];
                 return (
                   <div
                     key={entry.date}
@@ -1171,7 +1224,10 @@ export default function DesignPreview() {
                         {isMixed
                           ? `${isToday ? "היום · " : ""}יום מגוון`
                           : isOff
-                            ? `${isToday ? "היום · " : ""}${statusMeta?.label}`
+                            ? `${isToday ? "היום · " : ""}${(() => {
+                                const fl = fractionLabelFor(entry, target);
+                                return fl ? `${fl} יום ` : "";
+                              })()}${statusMeta?.label}`
                             : isToday
                               ? "היום"
                               : WEEKDAY_HE_LONG[date.getDay()]}
@@ -1180,15 +1236,24 @@ export default function DesignPreview() {
                     <div className="flex items-center gap-5">
                       <div className="flex flex-col items-end gap-1">
                         {isMixed && (
-                          <div className="flex flex-wrap gap-1 justify-end max-w-[170px]">
-                            {entry.dayParts!.map((p, i) => {
-                              const pm = STATUS_META[p.category];
-                              return (
-                                <span key={p.id || i} className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ color: pm.grad[0], background: pm.tint }}>
-                                  {pm.label} {formatHM(p.hours || 0)}
+                          <div className="flex flex-col items-end gap-1 max-w-[190px]">
+                            <div className="flex flex-wrap gap-1 justify-end">
+                              {mixedGroups.map(([cat, g]) => {
+                                const pm = STATUS_META[cat];
+                                return (
+                                  <span key={cat} className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ color: pm.grad[0], background: pm.tint }}>
+                                    {pm.label} {formatHM(g.total)}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                            {mixedGroups
+                              .filter(([, g]) => g.unpaid > 0.01)
+                              .map(([cat, g]) => (
+                                <span key={`${cat}-unpaid`} className="text-[10px] font-bold" style={{ color: "#DC2626" }}>
+                                  לא משולם: {formatHM(g.unpaid)} · −{moneyHe(unpaidAmountFor(entry.date, g.unpaid))}
                                 </span>
-                              );
-                            })}
+                              ))}
                           </div>
                         )}
                         {!isOff && !isMixed && (
@@ -1196,6 +1261,11 @@ export default function DesignPreview() {
                             {entry.segments && entry.segments.length > 1
                               ? entry.segments.map((seg) => `${seg.start}-${seg.end ?? "?"}`).join(", ")
                               : `${entry.start_time || "--:--"} - ${entry.end_time || "--:--"}`}
+                          </span>
+                        )}
+                        {plainUnpaidHours > 0.01 && (
+                          <span className="text-[10px] font-bold" style={{ color: "#DC2626" }}>
+                            לא משולם: {formatHM(plainUnpaidHours)} · −{moneyHe(unpaidAmountFor(entry.date, plainUnpaidHours))}
                           </span>
                         )}
                         {!isOff && isInProgress && (

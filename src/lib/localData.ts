@@ -831,11 +831,15 @@ export const computeLeaveUsage = (year: number, type: "vacation" | "sick", setti
       const target = getEffectiveDailyTarget(w.date, w, settings);
       if (target <= 0) continue;
       for (const p of w.dayParts) {
-        if (p.category === type) used += Math.min(1, Math.max(0, (p.hours || 0) / target));
+        // An unpaid slice (e.g. the exact excess of a balance-overflow split) was never actually
+        // granted from the balance, so it must not reduce it — only its paid slice does. Otherwise
+        // choosing "unpaid" would push the balance negative exactly like choosing "go negative"
+        // would, defeating the entire point of offering both as separate choices.
+        if (p.category === type && p.paid !== false) used += Math.min(1, Math.max(0, (p.hours || 0) / target));
       }
       continue;
     }
-    if (w.status === type) {
+    if (w.status === type && w.paid !== false) {
       used += effectiveDayFraction(w, getEffectiveDailyTarget(w.date, w, settings));
     } else if (type === "vacation" && w.status === "holiday" && w.remainderPaid !== false) {
       used += 1 - effectiveDayFraction(w, getEffectiveDailyTarget(w.date, w, settings));
@@ -848,6 +852,57 @@ export const computeLeaveUsage = (year: number, type: "vacation" | "sick", setti
     }
   }
   return used;
+};
+
+/** One day (or day-slice) where vacation/sick coverage fell short and the shortfall reduced pay
+ * instead of the balance — the exact reason source: computeUnpaidLeaveDeductions. */
+export interface UnpaidLeaveDeduction {
+  date: string;
+  type: "vacation" | "sick";
+  /** Hours of that day/slice that went unpaid. */
+  unpaidHours: number;
+  /** Same amount expressed as a fraction of that day's own target (e.g. 0.23 = just under 1/4 day). */
+  unpaidDays: number;
+  /** ₪ actually lost — unpaidHours × that month's effective hourly rate. */
+  amount: number;
+}
+
+/**
+ * Every real ₪ deduction this month caused by vacation/sick coverage falling short of what was
+ * requested — whether because the balance ran out entirely (a plain unpaid day/holiday-remainder)
+ * or only partially (a "יום מגוון" day split between a paid slice, covered by whatever balance was
+ * left, and an unpaid slice for the exact excess — see QuickDayMarkModal's overflow-split flow).
+ * One line per day/slice, so the user can see exactly which date cost how much and why — this is
+ * the same accounting computeRawMonthPay's unpaidLeaveDays already folds into net pay, just broken
+ * out per day instead of summed into one month-wide total.
+ */
+export const computeUnpaidLeaveDeductions = (year: number, month: number, settings: UserSettings): UnpaidLeaveDeduction[] => {
+  const entries = getWorkHoursForMonth(year, month);
+  const baseRate = computeEffectiveHourlyRateForMonth(year, month, settings);
+  const results: UnpaidLeaveDeduction[] = [];
+  const push = (date: string, type: "vacation" | "sick", unpaidHours: number, target: number) => {
+    if (unpaidHours <= 0.001 || target <= 0) return;
+    results.push({ date, type, unpaidHours, unpaidDays: unpaidHours / target, amount: unpaidHours * baseRate });
+  };
+  for (const w of entries) {
+    const target = getEffectiveDailyTarget(w.date, w, settings);
+    if (w.dayParts && w.dayParts.length > 0) {
+      for (const p of w.dayParts) {
+        if ((p.category === "vacation" || p.category === "sick") && p.paid === false) {
+          push(w.date, p.category, p.hours || 0, target);
+        }
+      }
+      continue;
+    }
+    if ((w.status === "vacation" || w.status === "sick") && w.paid === false) {
+      const unpaidHours = w.leaveHours !== undefined ? w.leaveHours : fractionMultiplier(w.fraction) * target;
+      push(w.date, w.status, unpaidHours, target);
+    } else if (w.status === "holiday" && w.remainderPaid === false) {
+      const unpaidHours = target - effectiveDayFraction(w, target) * target;
+      push(w.date, "vacation", unpaidHours, target);
+    }
+  }
+  return results.sort((a, b) => a.date.localeCompare(b.date));
 };
 
 /**

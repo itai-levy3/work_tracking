@@ -4,6 +4,7 @@ import { format } from "date-fns";
 import * as RxDialog from "@radix-ui/react-dialog";
 import {
   calcHoursBetween,
+  computeEffectiveHourlyRateForMonth,
   DayFraction,
   DayPart,
   DayStatus,
@@ -221,8 +222,22 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
     (getCountedHours(entry) > 0 || !!entry.start_time || (entry.status && entry.status !== "worked") || !!entry.note || !!entry.dayParts?.length);
   const isEditView = editing || !hasSavedData;
 
+  /** Lightens a hex color toward white — used to mark an UNPAID slice on the clock face: same
+   * category color family, visibly washed out, so "this part didn't get paid" reads at a glance. */
+  const lighten = (hex: string, amt: number): string => {
+    const h = hex.replace("#", "");
+    const num = parseInt(h.length === 3 ? h.split("").map((c) => c + c).join("") : h, 16);
+    const mix = (c: number) => Math.round(c + (255 - c) * amt);
+    const r = mix((num >> 16) & 255);
+    const g = mix((num >> 8) & 255);
+    const b = mix(num & 255);
+    return `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+  };
+
   // ---- "יום מגוון" summary: the same clock orb as a regular day, but its face is split into
-  // colored slices — one per category, sized by that category's share of the day. ----
+  // colored slices — one per category, sized by that category's share of the day. A slice whose
+  // part is unpaid (e.g. the exact excess beyond an overflowed balance) is drawn in a washed-out
+  // version of that category's color, so the paid/unpaid split is visible on the clock itself. ----
   const mixedClock = (() => {
     if (!entry?.dayParts?.length) return null;
     const parts = entry.dayParts.filter((p) => (p.hours || 0) > 0);
@@ -239,13 +254,42 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
     // Hours not assigned to any category yet (total below the daily target) show as a neutral slice.
     const unassignedHours = Math.max(0, target - total);
     const hasGap = acc < 359.5;
-    const stops = slices.flatMap((s) => [`${s.meta.grad[1]} ${s.from}deg`, `${s.meta.grad[0]} ${s.to}deg`]);
+    const stops = slices.flatMap((s) => {
+      const unpaid = s.part.paid === false;
+      const c0 = unpaid ? lighten(s.meta.grad[0], 0.55) : s.meta.grad[0];
+      const c1 = unpaid ? lighten(s.meta.grad[1], 0.55) : s.meta.grad[1];
+      return [`${c1} ${s.from}deg`, `${c0} ${s.to}deg`];
+    });
     if (hasGap) stops.push(`#CBD1E1 ${acc}deg`, `#CBD1E1 360deg`);
     const conic = `conic-gradient(from 0deg, ${stops.join(", ")})`;
     const dividerAngles = slices.length > 1 || hasGap ? [...slices.map((s) => s.from), ...(hasGap ? [acc] : [])] : [];
     const largest = slices.reduce((a, b) => (b.part.hours > a.part.hours ? b : a));
     return { slices, total, unassignedHours, conic, dividerAngles, largest };
   })();
+
+  // Same-category parts merged into one line — a balance-overflow split (e.g. paid מחלה + unpaid
+  // מחלה, the exact excess) reads as a single "3/4 יום מחלה" request with its own unpaid sub-line,
+  // never as two same-labeled cards that look like unrelated shifts.
+  const mixedCards = (() => {
+    if (!entry?.dayParts?.length) return [];
+    const map = new Map<string, { meta: (typeof STATUS_META)[keyof typeof STATUS_META]; total: number; unpaidHours: number; start?: string | null; end?: string | null }>();
+    for (const p of entry.dayParts) {
+      if ((p.hours || 0) <= 0) continue;
+      const existing = map.get(p.category);
+      if (existing) {
+        existing.total += p.hours;
+        if (p.paid === false) existing.unpaidHours += p.hours;
+        if (p.start && p.end && !existing.start) {
+          existing.start = p.start;
+          existing.end = p.end;
+        }
+      } else {
+        map.set(p.category, { meta: STATUS_META[p.category], total: p.hours, unpaidHours: p.paid === false ? p.hours : 0, start: p.start, end: p.end });
+      }
+    }
+    return [...map.entries()].map(([category, g]) => ({ category: category as DayStatus, ...g }));
+  })();
+  const mixedBaseRate = computeEffectiveHourlyRateForMonth(date.getFullYear(), date.getMonth(), settings);
 
   const describeShare = (hours: number, start?: string | null, end?: string | null) => {
     if (start && end) return `${start} – ${end}`;
@@ -633,32 +677,39 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                 label: "יום מגוון",
               })}
 
-              {/* Each slice as its own "shift" card — same white card language as a regular day's entry/exit pill */}
+              {/* One card per category — a balance-overflow split (paid slice + unpaid slice of the
+                  SAME category) merges into a single "משמרת" card with its own red unpaid sub-line,
+                  instead of two same-labeled cards that look like unrelated shifts. */}
               <div className="ddm-pill-in flex flex-col gap-2.5 w-full max-w-[330px]">
-                {mixedClock.slices.map(({ part: p, meta: m }, i) => (
+                {mixedCards.map((g, i) => (
                   <div
-                    key={p.id || i}
+                    key={g.category}
                     className="flex items-center gap-3 rounded-2xl ps-3 pe-4 py-2.5"
-                    style={{ background: "#fff", border: `1.5px solid ${m.grad[1]}55`, boxShadow: `0 10px 26px -12px ${m.glow}` }}
+                    style={{ background: "#fff", border: `1.5px solid ${g.meta.grad[1]}55`, boxShadow: `0 10px 26px -12px ${g.meta.glow}` }}
                   >
-                    <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: `linear-gradient(155deg, ${m.grad[0]}, ${m.grad[1]})`, boxShadow: `0 6px 14px -4px ${m.glow}` }}>
-                      <span className="material-symbols-outlined text-white" style={{ fontSize: 19 }}>{m.icon}</span>
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: `linear-gradient(155deg, ${g.meta.grad[0]}, ${g.meta.grad[1]})`, boxShadow: `0 6px 14px -4px ${g.meta.glow}` }}>
+                      <span className="material-symbols-outlined text-white" style={{ fontSize: 19 }}>{g.meta.icon}</span>
                     </div>
                     <div className="flex flex-col min-w-0 flex-1">
                       <span className="text-[14px] font-bold leading-tight" style={{ color: "#101A46" }}>
-                        {`משמרת ${i + 1} · ${m.label}`}
+                        {`משמרת ${i + 1} · ${g.meta.label}`}
                       </span>
                       <span className="text-[11.5px] font-medium mt-0.5" style={{ color: "#8892b0" }}>
-                        {p.start && p.end ? <span dir="ltr">{describeShare(p.hours, p.start, p.end)}</span> : describeShare(p.hours)}
+                        {g.start && g.end ? <span dir="ltr">{describeShare(g.total, g.start, g.end)}</span> : describeShare(g.total)}
                       </span>
+                      {g.unpaidHours > 0.01 && (
+                        <span className="text-[11px] font-bold mt-0.5" style={{ color: "#DC2626" }}>
+                          לא משולם: {formatHM(g.unpaidHours)} · −₪{Math.round(g.unpaidHours * mixedBaseRate).toLocaleString("he-IL")}
+                        </span>
+                      )}
                     </div>
                     <div className="flex flex-col items-end shrink-0">
-                      <span className="text-[20px] leading-none" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontWeight: 700, letterSpacing: "-0.02em", color: m.grad[0] }}>
-                        {formatHM(p.hours)}
+                      <span className="text-[20px] leading-none" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontWeight: 700, letterSpacing: "-0.02em", color: g.meta.grad[0] }}>
+                        {formatHM(g.total)}
                       </span>
-                      {(p.category === "vacation" || p.category === "sick") && (
-                        <span className="text-[10px] font-bold mt-1" style={{ color: p.paid !== false ? "#16A34A" : "#DC2626" }}>
-                          {p.paid !== false ? "משולם" : "לא משולם"}
+                      {(g.category === "vacation" || g.category === "sick") && (
+                        <span className="text-[10px] font-bold mt-1" style={{ color: g.unpaidHours <= 0.01 ? "#16A34A" : "#DC2626" }}>
+                          {g.unpaidHours <= 0.01 ? "משולם" : g.unpaidHours >= g.total - 0.01 ? "לא משולם" : "חלקית משולם"}
                         </span>
                       )}
                     </div>

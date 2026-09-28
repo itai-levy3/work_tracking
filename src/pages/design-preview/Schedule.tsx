@@ -127,34 +127,55 @@ export default function DesignPreviewSchedule() {
                         ? "worked"
                         : null;
                   const meta = dayStatus ? STATUS_META[dayStatus] : null;
-                  // "יום מגוון" (mixed day, including a "חול המועד" day) has its own violet-cyan
-                  // identity instead of any single STATUS_META color, since it's never just one category.
-                  const mixedColor = "#7639FF";
-                  const mixedBorderColor = "#00D2FF";
+                  // "יום מגוון" (mixed day, including a "חול המועד" day) is never just one color —
+                  // it shows the actual combination of categories that make it up (e.g. half orange
+                  // מחלה + half purple חג), grouped by category and sized by each one's share of the day.
+                  const mixedConic = (() => {
+                    if (!isMixed || !entry?.dayParts?.length) return null;
+                    const byCategory = new Map<string, number>();
+                    for (const p of entry.dayParts) {
+                      if ((p.hours || 0) <= 0) continue;
+                      byCategory.set(p.category, (byCategory.get(p.category) || 0) + p.hours);
+                    }
+                    const parts = [...byCategory.entries()];
+                    const total = parts.reduce((s, [, h]) => s + h, 0);
+                    if (total <= 0) return null;
+                    let acc = 0;
+                    const stops = parts.map(([cat, hours]) => {
+                      const m = STATUS_META[cat as DayStatus];
+                      const from = acc;
+                      acc += (hours / total) * 360;
+                      return `${m.grad[0]} ${from}deg ${acc}deg`;
+                    });
+                    return `conic-gradient(from 0deg, ${stops.join(", ")})`;
+                  })();
                   const isEvening = entry?.evening;
                   const hasNote = !!entry?.note;
                   const isWorkScheduled = settings.work_days[new Date(year, month, day).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase()];
                   return (
                     <div key={day} onClick={() => openDay(day)} className="h-10 flex items-center justify-center relative cursor-pointer">
-                      {isToday ? (
+                      {isToday && isMixed && mixedConic ? (
+                        <div className="absolute inset-1 rounded-full" style={{ background: mixedConic, boxShadow: "0 8px 20px rgba(35,50,100,0.3)", border: "2px solid #fff" }} />
+                      ) : isToday ? (
                         <div
                           className="absolute inset-1 rounded-full"
                           style={{
                             background: `linear-gradient(to bottom right, ${LH.primary}, ${LH.secondary})`,
                             boxShadow: "0 8px 20px rgba(89,2,232,0.3)",
-                            border: isMixed ? `2px solid ${mixedBorderColor}` : meta ? `2px solid ${meta.grad[1]}` : undefined,
+                            border: meta ? `2px solid ${meta.grad[1]}` : undefined,
                           }}
                         />
-                      ) : isMixed ? (
-                        <div className="absolute inset-1 rounded-full" style={{ background: `linear-gradient(155deg, ${mixedColor}24, ${mixedBorderColor}24)` }} />
+                      ) : isMixed && mixedConic ? (
+                        <div className="absolute inset-1 rounded-full" style={{ background: mixedConic, opacity: 0.85 }} />
                       ) : (
                         meta && <div className="absolute inset-1 rounded-full" style={{ background: meta.tint }} />
                       )}
                       <span
                         className="text-[16px] relative z-10 transition-colors font-bold"
                         style={{
-                          color: isToday ? LH.onPrimary : isMixed ? mixedColor : meta ? meta.grad[0] : isWorkScheduled ? LH.onSurfaceVariant : `${LH.onSurfaceVariant}66`,
+                          color: isToday || isMixed ? "#fff" : meta ? meta.grad[0] : isWorkScheduled ? LH.onSurfaceVariant : `${LH.onSurfaceVariant}66`,
                           fontWeight: isToday || isMixed || meta ? 700 : 400,
+                          textShadow: isMixed ? "0 1px 3px rgba(0,0,0,0.35)" : undefined,
                         }}
                       >
                         {day}

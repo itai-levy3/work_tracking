@@ -6,6 +6,7 @@ import {
   computeCumulativeAccrued,
   computeCumulativeLeaveUsage,
   DayFraction,
+  DayPart,
   fractionMultiplier,
   getEffectiveDailyTarget,
   saveSettings,
@@ -125,18 +126,77 @@ export function QuickDayMarkModal({ open, kind, date, existingEntry, isClockedIn
       end_time: closed?.end_time ?? existingEntry?.end_time ?? null,
       segments: closed?.segments ?? existingEntry?.segments,
     };
+
+    // "Unpaid" after an overflow doesn't necessarily mean the WHOLE request went unpaid — if some
+    // balance was still available, that part is genuinely covered from it, and only the exact
+    // excess beyond it is unpaid. Splitting the day into a paid slice + an unpaid slice (via
+    // dayParts, the same "יום מגוון" model) keeps both the balance deduction and the salary
+    // deduction exactly right, instead of writing off the entire requested amount as unpaid.
+    const overflowSplit =
+      !paid && pendingSave
+        ? (() => {
+            const remaining = Math.max(0, remainingBalance(pendingSave.leaveType));
+            const paidFraction = Math.min(pendingSave.requestedFraction, remaining);
+            const unpaidFraction = pendingSave.requestedFraction - paidFraction;
+            return paidFraction > 0.001 && unpaidFraction > 0.001 ? { leaveType: pendingSave.leaveType, paidFraction, unpaidFraction } : null;
+          })()
+        : null;
+
     if (kind === "holiday") {
       const holidayPortion = fractionMultiplier(fraction);
-      const paidPortion = fraction === "full" || paid ? 1 : holidayPortion;
+      if (overflowSplit) {
+        const parts: DayPart[] = [
+          { id: "qdm-holiday", category: "holiday", hours: target * holidayPortion },
+          { id: "qdm-vacation-paid", category: "vacation", hours: target * overflowSplit.paidFraction, paid: true },
+          { id: "qdm-vacation-unpaid", category: "vacation", hours: target * overflowSplit.unpaidFraction, paid: false },
+        ];
+        if (actualWorkedHours > 0) parts.unshift({ id: "qdm-worked", category: "worked", hours: actualWorkedHours, start: timeFields.start_time, end: timeFields.end_time });
+        upsertWorkHour({
+          ...existingEntry,
+          date: ds,
+          status: undefined,
+          fraction: undefined,
+          paid: undefined,
+          remainderPaid: undefined,
+          leaveHours: undefined,
+          start_time: null,
+          end_time: null,
+          segments: undefined,
+          hours_worked: parts.reduce((s, p) => s + p.hours, 0),
+          dayParts: parts,
+        });
+      } else {
+        const paidPortion = fraction === "full" || paid ? 1 : holidayPortion;
+        upsertWorkHour({
+          ...existingEntry,
+          date: ds,
+          status: "holiday",
+          fraction,
+          paid: true,
+          remainderPaid: fraction === "full" ? undefined : paid,
+          hours_worked: actualWorkedHours + target * paidPortion,
+          dayParts: undefined,
+          ...timeFields,
+        });
+      }
+    } else if (overflowSplit) {
+      const parts: DayPart[] = [
+        { id: "qdm-paid", category: kind, hours: target * overflowSplit.paidFraction, paid: true },
+        { id: "qdm-unpaid", category: kind, hours: target * overflowSplit.unpaidFraction, paid: false },
+      ];
+      if (actualWorkedHours > 0) parts.unshift({ id: "qdm-worked", category: "worked", hours: actualWorkedHours, start: timeFields.start_time, end: timeFields.end_time });
       upsertWorkHour({
         ...existingEntry,
         date: ds,
-        status: "holiday",
-        fraction,
-        paid: true,
-        remainderPaid: fraction === "full" ? undefined : paid,
-        hours_worked: actualWorkedHours + target * paidPortion,
-        ...timeFields,
+        status: undefined,
+        fraction: undefined,
+        paid: undefined,
+        leaveHours: undefined,
+        start_time: null,
+        end_time: null,
+        segments: undefined,
+        hours_worked: parts.reduce((s, p) => s + p.hours, 0),
+        dayParts: parts,
       });
     } else {
       upsertWorkHour({
@@ -146,10 +206,18 @@ export function QuickDayMarkModal({ open, kind, date, existingEntry, isClockedIn
         fraction,
         paid,
         hours_worked: actualWorkedHours + (paid ? target * fractionMultiplier(fraction) : 0),
+        dayParts: undefined,
         ...timeFields,
       });
     }
-    toast.success(`${KIND_TITLE[kind]} סומן להיום${paid === false ? " (לא משולם)" : ""}`);
+
+    if (overflowSplit) {
+      toast.success(
+        `${KIND_TITLE[kind]} סומן — ${overflowSplit.paidFraction.toFixed(2)} מיום מהיתרה, ${overflowSplit.unpaidFraction.toFixed(2)} מיום לא משולם`,
+      );
+    } else {
+      toast.success(`${KIND_TITLE[kind]} סומן להיום${paid === false ? " (לא משולם)" : ""}`);
+    }
     onSaved();
     onClose();
   };

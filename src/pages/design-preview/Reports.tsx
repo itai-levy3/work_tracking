@@ -11,6 +11,7 @@ import {
   computeEffectiveHourlyRateForMonth,
   computeMonthlyPayroll,
   computeProjectedMonthlyPayroll,
+  computeUnpaidLeaveDeductions,
   CORRECTABLE_PAYROLL_FIELDS,
   deletePayrollActual,
   formatHM,
@@ -159,6 +160,18 @@ export default function DesignPreviewReports() {
     const raw = computeCurrentMonthToDatePayroll(currentMonth.getFullYear(), currentMonth.getMonth(), effectiveSettings);
     return applyPayrollExtras(raw, payrollExtras.extraAdditions, payrollExtras.extraDeductions);
   }, [effectiveSettings, currentMonth, payrollExtras]);
+
+  // Every real ₪ deduction this month from vacation/sick coverage falling short of what was
+  // requested (balance ran out entirely, or only partially — see the "יום מגוון" overflow-split
+  // flow) — one line per exact date, so the user can see precisely what cost how much and why.
+  const unpaidLeaveDeductions = useMemo(() => {
+    if (!effectiveSettings) return [];
+    return computeUnpaidLeaveDeductions(currentMonth.getFullYear(), currentMonth.getMonth(), effectiveSettings);
+  }, [effectiveSettings, currentMonth]);
+  const vacationDeductions = unpaidLeaveDeductions.filter((d) => d.type === "vacation");
+  const sickDeductions = unpaidLeaveDeductions.filter((d) => d.type === "sick");
+  const vacationDeductionsTotal = vacationDeductions.reduce((s, d) => s + d.amount, 0);
+  const sickDeductionsTotal = sickDeductions.reduce((s, d) => s + d.amount, 0);
 
   // Scheduled base-salary target for the viewed month (hours × rate, no overtime) — what the arc
   // gauge below measures progress against.
@@ -988,6 +1001,54 @@ export default function DesignPreviewReports() {
                 ))}
             </div>
           </div>
+
+          {/* Every ₪ deduction this month from vacation/sick coverage falling short — whether the
+              balance ran out entirely or only partially (a "יום מגוון" overflow-split day) — one
+              line per exact date, so the reason and the amount are always fully transparent. */}
+          {(vacationDeductions.length > 0 || sickDeductions.length > 0) && (
+            <div className="lh-rise flex flex-col gap-4 relative z-10 mt-2" style={{ animationDelay: "160ms" }}>
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined" style={{ color: "#DC2626" }}>receipt_long</span>
+                <h2 className="text-[18px] font-bold" style={{ color: LH.onSurface }}>קיזוזים בשכר החודש</h2>
+              </div>
+              {[
+                { title: "חריגת ימי חופש", list: vacationDeductions, total: vacationDeductionsTotal },
+                { title: "חריגת ימי מחלה", list: sickDeductions, total: sickDeductionsTotal },
+              ]
+                .filter((sec) => sec.list.length > 0)
+                .map((sec) => (
+                  <div
+                    key={sec.title}
+                    className="rounded-[24px] p-5 flex flex-col gap-3"
+                    style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[14px] font-bold" style={{ color: LH.onSurface }}>{sec.title}</span>
+                      <span dir="ltr" className="tabular-nums text-[16px] font-bold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: "#DC2626" }}>
+                        −{money(sec.total)}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {sec.list.map((d, i) => (
+                        <div key={i} className="flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: "rgba(220,38,38,0.06)" }}>
+                          <div className="flex flex-col">
+                            <span className="text-[12.5px] font-semibold" style={{ color: LH.onSurface }}>
+                              {new Date(`${d.date}T00:00:00`).toLocaleDateString("he-IL", { day: "numeric", month: "long", year: "numeric" })}
+                            </span>
+                            <span className="text-[11px]" style={{ color: LH.onSurfaceVariant }}>
+                              {formatHM(d.unpaidHours)} שעות לא משולמות · {d.unpaidDays.toFixed(2)} מיום
+                            </span>
+                          </div>
+                          <span dir="ltr" className="tabular-nums text-[14px] font-bold shrink-0" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: "#DC2626" }}>
+                            −{money(d.amount)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
       </main>
       <LHBottomNav active="reports" foodEnabled={!!settings.food_card_enabled} />
