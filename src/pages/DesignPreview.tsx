@@ -1251,7 +1251,7 @@ export default function DesignPreview() {
                               .filter(([, g]) => g.unpaid > 0.01)
                               .map(([cat, g]) => (
                                 <span key={`${cat}-unpaid`} className="text-[10px] font-bold" style={{ color: "#DC2626" }}>
-                                  לא משולם: {formatHM(g.unpaid)} · −{moneyHe(unpaidAmountFor(entry.date, g.unpaid))}
+                                  {formatHM(g.unpaid)} לא משולם - {moneyHe(unpaidAmountFor(entry.date, g.unpaid))}
                                 </span>
                               ))}
                           </div>
@@ -1265,7 +1265,7 @@ export default function DesignPreview() {
                         )}
                         {plainUnpaidHours > 0.01 && (
                           <span className="text-[10px] font-bold" style={{ color: "#DC2626" }}>
-                            לא משולם: {formatHM(plainUnpaidHours)} · −{moneyHe(unpaidAmountFor(entry.date, plainUnpaidHours))}
+                            {formatHM(plainUnpaidHours)} לא משולם - {moneyHe(unpaidAmountFor(entry.date, plainUnpaidHours))}
                           </span>
                         )}
                         {!isOff && isInProgress && (

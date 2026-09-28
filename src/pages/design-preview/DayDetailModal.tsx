@@ -699,7 +699,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                       </span>
                       {g.unpaidHours > 0.01 && (
                         <span className="text-[11px] font-bold mt-0.5" style={{ color: "#DC2626" }}>
-                          לא משולם: {formatHM(g.unpaidHours)} · −₪{Math.round(g.unpaidHours * mixedBaseRate).toLocaleString("he-IL")}
+                          {formatHM(g.unpaidHours)} לא משולם - ₪{Math.round(g.unpaidHours * mixedBaseRate).toLocaleString("he-IL")}
                         </span>
                       )}
                     </div>

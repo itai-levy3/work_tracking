@@ -151,6 +151,14 @@ export default function DesignPreviewSchedule() {
                   })();
                   const isEvening = entry?.evening;
                   const hasNote = !!entry?.note;
+                  // Any real ₪ hit this day cost — a plain unpaid vacation/sick day, a declined
+                  // holiday remainder, or an unpaid slice inside a "יום מגוון" split day — flagged
+                  // right on the calendar so a costly day is never invisible until opened.
+                  const hasUnpaidDeduction = entry?.dayParts?.length
+                    ? entry.dayParts.some((p) => (p.category === "vacation" || p.category === "sick") && p.paid === false && (p.hours || 0) > 0)
+                    : (entry?.status === "vacation" || entry?.status === "sick") && entry?.paid === false
+                      ? true
+                      : entry?.status === "holiday" && entry?.remainderPaid === false;
                   const isWorkScheduled = settings.work_days[new Date(year, month, day).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase()];
                   return (
                     <div key={day} onClick={() => openDay(day)} className="h-10 flex items-center justify-center relative cursor-pointer">
@@ -183,6 +191,7 @@ export default function DesignPreviewSchedule() {
                       <div className="absolute bottom-1 flex gap-0.5">
                         {isEvening && <div className="w-1 h-1 rounded-full" style={{ background: isToday ? "#fff" : LH.secondary }} />}
                         {hasNote && <div className="w-1 h-1 rounded-full" style={{ background: isToday ? "#fff" : LH.tertiaryContainer }} />}
+                        {hasUnpaidDeduction && <div className="w-1 h-1 rounded-full" style={{ background: isToday ? "#fff" : "#DC2626" }} />}
                       </div>
                     </div>
                   );
@@ -207,6 +216,10 @@ export default function DesignPreviewSchedule() {
                 <div className="flex items-center gap-1.5">
                   <div className="w-2 h-2 rounded-full" style={{ background: LH.tertiaryContainer }} />
                   <span className="text-[11px] font-bold tracking-[0.05em]" style={{ color: LH.onSurfaceVariant }}>הערה</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2 h-2 rounded-full" style={{ background: "#DC2626" }} />
+                  <span className="text-[11px] font-bold tracking-[0.05em]" style={{ color: LH.onSurfaceVariant }}>קיזוז בשכר</span>
                 </div>
               </div>
             </div>
