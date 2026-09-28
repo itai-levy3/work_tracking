@@ -172,6 +172,7 @@ export default function DesignPreviewReports() {
   const sickDeductions = unpaidLeaveDeductions.filter((d) => d.type === "sick");
   const vacationDeductionsTotal = vacationDeductions.reduce((s, d) => s + d.amount, 0);
   const sickDeductionsTotal = sickDeductions.reduce((s, d) => s + d.amount, 0);
+  const totalDeductionsAmount = vacationDeductionsTotal + sickDeductionsTotal;
 
   // Scheduled base-salary target for the viewed month (hours × rate, no overtime) — what the arc
   // gauge below measures progress against.
@@ -947,6 +948,89 @@ export default function DesignPreviewReports() {
                 <span className="material-symbols-outlined text-[22px] shrink-0" style={{ color: LH.onSurfaceVariant }}>chevron_left</span>
               </button>
 
+              {/* Every ₪ deduction this month from vacation/sick coverage falling short — whether the
+                  balance ran out entirely or only partially (a "יום מגוון" overflow-split day) — one
+                  line per exact date on a shared timeline, so the reason and the amount are always
+                  fully transparent, right between the month-end forecast and today's real net. */}
+              {unpaidLeaveDeductions.length > 0 && (
+                <div
+                  className="col-span-2 rounded-[28px] p-6 relative overflow-hidden"
+                  style={{ background: "linear-gradient(165deg, rgba(24,20,34,0.97), rgba(48,20,28,0.96))", boxShadow: "0 20px 50px -12px rgba(220,38,38,0.28)" }}
+                >
+                  <div className="absolute -left-10 -top-10 w-44 h-44 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(220,38,38,0.35), transparent 70%)" }} />
+                  <div className="absolute -right-14 bottom-0 w-52 h-52 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(251,146,60,0.16), transparent 70%)" }} />
+
+                  <div className="flex items-center justify-between relative z-10 mb-5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "rgba(255,255,255,0.1)" }}>
+                        <span className="material-symbols-outlined text-[18px]" style={{ color: "#F87171" }}>receipt_long</span>
+                      </div>
+                      <span className="text-[13px] font-extrabold tracking-[0.1em] uppercase" style={{ color: "rgba(255,255,255,0.75)" }}>קיזוזים בשכר</span>
+                    </div>
+                    <div className="text-left">
+                      <span dir="ltr" className="block leading-none" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 26, fontWeight: 800, color: "#fff" }}>
+                        −{money(totalDeductionsAmount)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Per-category mini stats — only the categories actually hit this month */}
+                  <div className={`grid gap-2.5 relative z-10 mb-5 ${vacationDeductions.length > 0 && sickDeductions.length > 0 ? "grid-cols-2" : "grid-cols-1"}`}>
+                    {vacationDeductions.length > 0 && (
+                      <div className="rounded-2xl p-3.5" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          <span className="material-symbols-outlined text-[15px]" style={{ color: "#60A5FA" }}>beach_access</span>
+                          <span className="text-[10.5px] font-bold" style={{ color: "rgba(255,255,255,0.6)" }}>חריגת חופש · {vacationDeductions.length} ימים</span>
+                        </div>
+                        <span dir="ltr" className="block" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 18, fontWeight: 700, color: "#93C5FD" }}>
+                          −{money(vacationDeductionsTotal)}
+                        </span>
+                      </div>
+                    )}
+                    {sickDeductions.length > 0 && (
+                      <div className="rounded-2xl p-3.5" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          <span className="material-symbols-outlined text-[15px]" style={{ color: "#FBBF24" }}>thermostat</span>
+                          <span className="text-[10.5px] font-bold" style={{ color: "rgba(255,255,255,0.6)" }}>חריגת מחלה · {sickDeductions.length} ימים</span>
+                        </div>
+                        <span dir="ltr" className="block" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 18, fontWeight: 700, color: "#FCD34D" }}>
+                          −{money(sickDeductionsTotal)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Shared timeline — both categories merged, sorted by date, each dot in its own category color */}
+                  <div className="flex flex-col relative z-10">
+                    {unpaidLeaveDeductions.map((d, i) => {
+                      const color = d.type === "vacation" ? "#60A5FA" : "#FBBF24";
+                      const isLast = i === unpaidLeaveDeductions.length - 1;
+                      return (
+                        <div key={`${d.date}-${d.type}`} className="flex gap-3">
+                          <div className="flex flex-col items-center pt-1.5 shrink-0">
+                            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color, boxShadow: `0 0 8px 1px ${color}66` }} />
+                            {!isLast && <span className="w-px flex-1" style={{ background: "rgba(255,255,255,0.14)" }} />}
+                          </div>
+                          <div className={`flex items-center justify-between gap-2 flex-1 ${isLast ? "pb-0" : "pb-4"}`}>
+                            <div className="flex flex-col">
+                              <span className="text-[12.5px] font-bold" style={{ color: "#fff" }}>
+                                {new Date(`${d.date}T00:00:00`).toLocaleDateString("he-IL", { day: "numeric", month: "long" })}
+                              </span>
+                              <span className="text-[11px]" style={{ color: "rgba(255,255,255,0.5)" }}>
+                                {formatHM(d.unpaidHours)} לא משולמות · {d.unpaidDays.toFixed(2)} מיום
+                              </span>
+                            </div>
+                            <span dir="ltr" className="tabular-nums text-[14px] font-bold shrink-0" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color }}>
+                              −{money(d.amount)}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Net pay exactly as it stands right now — deductions/additions prorated to date,
                   not projected to month-end. Only meaningful mid-month. */}
               {isCurrentMonth && (
@@ -1002,53 +1086,6 @@ export default function DesignPreviewReports() {
             </div>
           </div>
 
-          {/* Every ₪ deduction this month from vacation/sick coverage falling short — whether the
-              balance ran out entirely or only partially (a "יום מגוון" overflow-split day) — one
-              line per exact date, so the reason and the amount are always fully transparent. */}
-          {(vacationDeductions.length > 0 || sickDeductions.length > 0) && (
-            <div className="lh-rise flex flex-col gap-4 relative z-10 mt-2" style={{ animationDelay: "160ms" }}>
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined" style={{ color: "#DC2626" }}>receipt_long</span>
-                <h2 className="text-[18px] font-bold" style={{ color: LH.onSurface }}>קיזוזים בשכר החודש</h2>
-              </div>
-              {[
-                { title: "חריגת ימי חופש", list: vacationDeductions, total: vacationDeductionsTotal },
-                { title: "חריגת ימי מחלה", list: sickDeductions, total: sickDeductionsTotal },
-              ]
-                .filter((sec) => sec.list.length > 0)
-                .map((sec) => (
-                  <div
-                    key={sec.title}
-                    className="rounded-[24px] p-5 flex flex-col gap-3"
-                    style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-[14px] font-bold" style={{ color: LH.onSurface }}>{sec.title}</span>
-                      <span dir="ltr" className="tabular-nums text-[16px] font-bold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: "#DC2626" }}>
-                        −{money(sec.total)}
-                      </span>
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      {sec.list.map((d, i) => (
-                        <div key={i} className="flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: "rgba(220,38,38,0.06)" }}>
-                          <div className="flex flex-col">
-                            <span className="text-[12.5px] font-semibold" style={{ color: LH.onSurface }}>
-                              {new Date(`${d.date}T00:00:00`).toLocaleDateString("he-IL", { day: "numeric", month: "long", year: "numeric" })}
-                            </span>
-                            <span className="text-[11px]" style={{ color: LH.onSurfaceVariant }}>
-                              {formatHM(d.unpaidHours)} שעות לא משולמות · {d.unpaidDays.toFixed(2)} מיום
-                            </span>
-                          </div>
-                          <span dir="ltr" className="tabular-nums text-[14px] font-bold shrink-0" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: "#DC2626" }}>
-                            −{money(d.amount)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-            </div>
-          )}
         </div>
       </main>
       <LHBottomNav active="reports" foodEnabled={!!settings.food_card_enabled} />
