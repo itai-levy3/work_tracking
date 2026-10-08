@@ -1304,6 +1304,14 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
   return { regularHours, overtimeHours, regularPay, overtimePay, daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay };
 };
 
+/** Gross pay one single day earned (regular + overtime), using exactly the same per-day accounting
+ * as the monthly payroll — so a daily feed and the month total can never disagree. */
+export const computeDayPay = (w: WorkHour, settings: UserSettings): { pay: number; overtimePay: number } => {
+  const d = new Date(`${w.date}T00:00:00`);
+  const raw = computeRawMonthPay(d.getFullYear(), d.getMonth(), settings, [w]);
+  return { pay: raw.regularPay + raw.overtimePay, overtimePay: raw.overtimePay };
+};
+
 export const computeMonthlyPayroll = (year: number, month: number, settings: UserSettings, entriesOverride?: WorkHour[]): MonthlyPayroll => {
   const raw = computeRawMonthPay(year, month, settings, entriesOverride);
   const { daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay, regularHours, regularPay } = raw;

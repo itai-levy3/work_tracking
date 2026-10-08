@@ -1,107 +1,85 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { toast } from "sonner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { analyzePayrollDeviation, ChatTurn } from "@/lib/aiAssistant";
 import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import {
-  applyPayrollExtras,
-  applyPayrollFieldOverrides,
+  calcHoursBetween,
   computeCurrentMonthToDatePayroll,
-  computeEffectiveHourlyRateForMonth,
+  computeDayPay,
   computeMonthlyPayroll,
   computeProjectedMonthlyPayroll,
   computeUnpaidLeaveDeductions,
-  CORRECTABLE_PAYROLL_FIELDS,
-  deletePayrollActual,
+  DayStatus,
+  effectiveDayFraction,
   formatHM,
-  getArchivedPdfForMonth,
-  getPayrollActual,
-  getProfileFirstName,
+  fractionMultiplier,
+  getCountedHours,
+  getEffectiveDailyTarget,
   getSettings,
-  PayLineItem,
-  PAYROLL_DEVIATION_REASONS,
-  PdfArchiveEntry,
-  savePayrollActual,
-  saveSettings,
+  getWorkHoursForMonth,
+  MonthlyPayroll,
   UserSettings,
+  WorkHour,
 } from "@/lib/localData";
-import { exportMonthlyPayslipPdf } from "@/lib/pdfExport";
-import { LH } from "./tokens";
+import { LH, STATUS_META } from "./tokens";
 import { LHHeader, LHBottomNav, LHLoadingScreen, globalStyle } from "./Shared";
 
 const MONTH_HE = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
-const money = (n: number) => `₪${n.toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+const WEEKDAY_HE = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+const money = (n: number) => `₪${Math.round(n).toLocaleString("he-IL")}`;
+const dateKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/** Gross for a payroll snapshot: base hours + overtime + fixed additions + food allowance. No taxes,
+ * no deductions of any kind — this page only ever tracks what's earned before anything is withheld. */
+const grossOf = (p: MonthlyPayroll) => p.regularPay + p.overtimePay + p.fixedComponentsTotal + p.foodAllowanceAddition;
+
+interface FeedPart {
+  category: DayStatus;
+  hours: number;
+  paid: boolean;
+}
+
+/** Any day, whatever shape it was saved in, as a flat list of "this much of the day was X, paid or not". */
+const feedParts = (w: WorkHour, target: number): FeedPart[] => {
+  if (w.dayParts && w.dayParts.length > 0) {
+    return w.dayParts
+      .filter((p) => (p.hours || 0) > 0.001)
+      .map((p) => ({
+        category: p.category,
+        hours: p.hours,
+        paid: p.category === "off" ? false : p.category === "worked" || p.category === "holiday" ? true : p.paid !== false,
+      }));
+  }
+  const st = (w.status || "worked") as DayStatus;
+  if (st === "worked") return getCountedHours(w) > 0.001 ? [{ category: "worked", hours: getCountedHours(w), paid: true }] : [];
+  const parts: FeedPart[] = [];
+  const workedPortion = w.start_time && w.end_time ? calcHoursBetween(w.start_time, w.end_time) : 0;
+  if (workedPortion > 0.001) parts.push({ category: "worked", hours: workedPortion, paid: true });
+  if (st === "off") {
+    parts.push({ category: "off", hours: target * fractionMultiplier(w.fraction), paid: false });
+  } else if (st === "holiday") {
+    const f = effectiveDayFraction(w, target);
+    parts.push({ category: "holiday", hours: f * target, paid: true });
+    if (f < 0.999) parts.push({ category: "vacation", hours: (1 - f) * target, paid: w.remainderPaid !== false });
+  } else {
+    parts.push({ category: st, hours: w.leaveHours !== undefined ? w.leaveHours : fractionMultiplier(w.fraction) * target, paid: w.paid !== false });
+  }
+  return parts.filter((p) => p.hours > 0.001);
+};
+
+const LEAVE_MESSAGE: Record<string, string> = {
+  "sick:true": "תרגיש טוב! פיצינו אותך על יום המחלה על חשבון ימי המחלה שלך.",
+  "sick:false": "מקווה שתרגיש טוב, אבל המערכת לא יכולה לתת לך כסף על ימי מחלה שמעבר ליתרה.",
+  "vacation:true": "מגיעה לך חופשה! היום שולם על חשבון ימי החופשה שלך.",
+  "vacation:false": "חופשה ללא תשלום — לא נצבר שכר על החלק הזה.",
+  "holiday:true": "חג — היום שולם במלואו.",
+  "off:false": "יום לא עובד — לא נצבר שכר.",
+};
 
 export default function DesignPreviewReports() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [currentMonth, setCurrentMonth] = useState(() => new Date());
-  const [salaryForecastOpen, setSalaryForecastOpen] = useState(false);
-
-  // Actual-vs-estimated net pay reconciliation for the viewed month.
-  const [actualNetInput, setActualNetInput] = useState("");
-  const [deviationReasonId, setDeviationReasonId] = useState<string | undefined>(undefined);
-  const [deviationNote, setDeviationNote] = useState("");
-  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
-  const [aiAnalysisLoading, setAiAnalysisLoading] = useState(false);
-  const [actualSaved, setActualSaved] = useState(false);
-  const [detectedField, setDetectedField] = useState<string | null>(null);
-  const [isDeviationRecurring, setIsDeviationRecurring] = useState(false);
-  const [aiHistory, setAiHistory] = useState<ChatTurn[]>([]);
-  // A >50₪ deviation triggers the deep investigation automatically — this just guards against
-  // re-firing it on every render for the same (month, deviation) once it's already run or the
-  // user dismissed/edited it away.
-  const [autoAnalyzedKey, setAutoAnalyzedKey] = useState<string | null>(null);
-
-  // Full manual editor — every correctable field at once, plus one-off extra line items for this
-  // month specifically (a bonus, a one-time deduction the estimate missed).
-  const [fullEditorOpen, setFullEditorOpen] = useState(false);
-  const [fieldDrafts, setFieldDrafts] = useState<Record<string, string>>({});
-  const [extraAdditionsDraft, setExtraAdditionsDraft] = useState<PayLineItem[]>([]);
-  const [extraDeductionsDraft, setExtraDeductionsDraft] = useState<PayLineItem[]>([]);
-  // Bumped after every save so the payroll useMemo below (and this load effect) re-read the
-  // just-written record — getPayrollActual itself isn't reactive state React can track.
-  const [actualsVersion, setActualsVersion] = useState(0);
-
-  // Saved payslip PDFs — the last 3 archived months load instantly; browsing further back with
-  // the month arrows triggers an on-demand Supabase lookup for that specific month.
-  const [archivedPdf, setArchivedPdf] = useState<PdfArchiveEntry | null>(null);
-  const [archivedPdfLoading, setArchivedPdfLoading] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    setArchivedPdf(null);
-    setArchivedPdfLoading(true);
-    getArchivedPdfForMonth(currentMonth.getFullYear(), currentMonth.getMonth())
-      .then((entry) => {
-        if (!cancelled) setArchivedPdf(entry);
-      })
-      .finally(() => {
-        if (!cancelled) setArchivedPdfLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [currentMonth]);
-
-  const handleDownloadArchivedPdf = (entry: PdfArchiveEntry) => {
-    const a = document.createElement("a");
-    a.href = entry.dataUrl;
-    a.download = `payslip-${entry.year}-${String(entry.month + 1).padStart(2, "0")}.pdf`;
-    a.click();
-  };
-
-  useEffect(() => {
-    const existing = getPayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
-    setActualNetInput(existing ? String(Math.round(existing.actualNet)) : "");
-    setDeviationReasonId(existing?.reasonId);
-    setDeviationNote(existing?.note || "");
-    setAiAnalysis(existing?.aiAnalysis || null);
-    setDetectedField(existing?.overrideField || null);
-    setActualSaved(!!existing);
-  }, [currentMonth, actualsVersion]);
 
   useEffect(() => {
     if (!isLocalAuthenticated()) {
@@ -118,293 +96,81 @@ export default function DesignPreviewReports() {
     });
   }, [navigate]);
 
-  // Effective settings for the viewed month — patched with any saved field overrides (income tax,
-  // National Insurance, Health Insurance, pension %, etc.) from the actual-vs-estimated reconciliation,
-  // so a correction there is reflected everywhere this month is shown: the estimate below, the
-  // month-end forecast, AND the "נטו נכון להיום" hero — not just the one card that captured it.
-  const effectiveSettings = useMemo(() => {
-    if (!settings) return null;
-    const savedActual = getPayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
-    const fieldOverrides = savedActual?.fieldOverrides ?? (savedActual?.overrideField && savedActual.overrideValue !== undefined ? { [savedActual.overrideField]: savedActual.overrideValue } : undefined);
-    return applyPayrollFieldOverrides(settings, fieldOverrides);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, currentMonth, actualsVersion]);
+  const year = currentMonth.getFullYear();
+  const month = currentMonth.getMonth();
+  const now = new Date();
+  const isCurrentMonth = now.getFullYear() === year && now.getMonth() === month;
 
-  const payrollExtras = useMemo(() => {
-    const savedActual = getPayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
-    return { extraAdditions: savedActual?.extraAdditions, extraDeductions: savedActual?.extraDeductions };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentMonth, actualsVersion]);
+  const payroll = useMemo(() => (settings ? computeMonthlyPayroll(year, month, settings) : null), [settings, year, month]);
+  const projected = useMemo(() => (settings ? computeProjectedMonthlyPayroll(year, month, settings) : null), [settings, year, month]);
+  const toDate = useMemo(() => (settings ? computeCurrentMonthToDatePayroll(year, month, settings) : null), [settings, year, month]);
+  const deductions = useMemo(() => (settings ? computeUnpaidLeaveDeductions(year, month, settings) : []), [settings, year, month]);
 
-  const payroll = useMemo(() => {
-    if (!effectiveSettings) return null;
-    const raw = computeMonthlyPayroll(currentMonth.getFullYear(), currentMonth.getMonth(), effectiveSettings);
-    return applyPayrollExtras(raw, payrollExtras.extraAdditions, payrollExtras.extraDeductions);
-  }, [effectiveSettings, currentMonth, payrollExtras]);
-
-  // Full end-of-month forecast: same as `payroll` for already-earned figures, but the deduction
-  // categories (and net) reflect the FULL month's expected gross — days that haven't happened yet
-  // this month are projected from the schedule — so mid-month already shows what's really coming.
-  const isCurrentMonth = new Date().getFullYear() === currentMonth.getFullYear() && new Date().getMonth() === currentMonth.getMonth();
-  const projectedPayroll = useMemo(() => {
-    if (!effectiveSettings) return null;
-    const raw = computeProjectedMonthlyPayroll(currentMonth.getFullYear(), currentMonth.getMonth(), effectiveSettings);
-    return applyPayrollExtras(raw, payrollExtras.extraAdditions, payrollExtras.extraDeductions);
-  }, [effectiveSettings, currentMonth, payrollExtras]);
-
-  // Net pay exactly as it stands right now, mid-month — flat additions/deductions prorated by how
-  // much of the month's scheduled work days have elapsed, instead of the full-month forecast.
-  const [currentNetOpen, setCurrentNetOpen] = useState(false);
-  const currentToDatePayroll = useMemo(() => {
-    if (!effectiveSettings) return null;
-    const raw = computeCurrentMonthToDatePayroll(currentMonth.getFullYear(), currentMonth.getMonth(), effectiveSettings);
-    return applyPayrollExtras(raw, payrollExtras.extraAdditions, payrollExtras.extraDeductions);
-  }, [effectiveSettings, currentMonth, payrollExtras]);
-
-  // Every real ₪ deduction this month from vacation/sick coverage falling short of what was
-  // requested (balance ran out entirely, or only partially — see the "יום מגוון" overflow-split
-  // flow) — one line per exact date, so the user can see precisely what cost how much and why.
-  const unpaidLeaveDeductions = useMemo(() => {
-    if (!effectiveSettings) return [];
-    return computeUnpaidLeaveDeductions(currentMonth.getFullYear(), currentMonth.getMonth(), effectiveSettings);
-  }, [effectiveSettings, currentMonth]);
-  const vacationDeductions = unpaidLeaveDeductions.filter((d) => d.type === "vacation");
-  const sickDeductions = unpaidLeaveDeductions.filter((d) => d.type === "sick");
-  const vacationDeductionsTotal = vacationDeductions.reduce((s, d) => s + d.amount, 0);
-  const sickDeductionsTotal = sickDeductions.reduce((s, d) => s + d.amount, 0);
-  const totalDeductionsAmount = vacationDeductionsTotal + sickDeductionsTotal;
-
-  // Scheduled base-salary target for the viewed month (hours × rate, no overtime) — what the arc
-  // gauge below measures progress against.
-  const monthlyGoalHours = useMemo(() => {
-    if (!settings) return 0;
-    if (settings.employment_type === "part_time") return settings.part_time_monthly_target_hours || 0;
-    const y = currentMonth.getFullYear();
-    const m = currentMonth.getMonth();
-    const daysInMonth = new Date(y, m + 1, 0).getDate();
-    let total = 0;
-    for (let d = 1; d <= daysInMonth; d++) {
-      const weekday = new Date(y, m, d).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
-      if (settings.work_days[weekday]) total += settings.hours_per_day[weekday] || 0;
-    }
-    return total;
-  }, [settings, currentMonth]);
-
-  if (loading || !settings || !payroll || !projectedPayroll || !currentToDatePayroll) {
-    return <LHLoadingScreen />;
-  }
-
-  const totalHours = payroll.regularHours + payroll.overtimeHours;
-  // "ברוטו" as defined in Settings: by default (fixed_components_in_gross = true) it's the
-  // historical merged figure (base + overtime + fixed additions + food). When the user's real
-  // payslip reports gross as base pay only — with travel/other additions paid on top, separately —
-  // flipping the toggle off makes baseGrossPay the ברוטו figure and additions become their own line
-  // reaching a grand total. forecastGrossTotal always stays the true sum of everything before
-  // deductions; it's the denominator for the composition bar/deduction shares below regardless of
-  // the toggle, never itself labeled "ברוטו" in the UI.
-  const includeAdditionsInGross = settings.fixed_components_in_gross ?? true;
-  const baseGrossPay = projectedPayroll.regularPay + projectedPayroll.overtimePay;
-  const additionsGrandTotal = projectedPayroll.fixedComponentsTotal + projectedPayroll.foodAllowanceAddition;
-  const forecastGrossTotal = baseGrossPay + additionsGrandTotal;
-  const grossDisplayTotal = includeAdditionsInGross ? forecastGrossTotal : baseGrossPay;
-  const deductionsGrandTotal = forecastGrossTotal - projectedPayroll.netPay;
-  const effectiveHourlyRate = computeEffectiveHourlyRateForMonth(currentMonth.getFullYear(), currentMonth.getMonth(), settings);
-  const baseSalaryTarget = monthlyGoalHours * effectiveHourlyRate;
-  const earnedPay = payroll.regularPay + payroll.overtimePay;
-  const basePctAchieved = baseSalaryTarget > 0 ? (earnedPay / baseSalaryTarget) * 100 : 0;
-  const bonusFromOvertimePct = Math.max(0, basePctAchieved - 100);
-  const arcFillPct = Math.min(100, basePctAchieved);
-
-  const actualNetValue = parseFloat(actualNetInput);
-  const hasActualNet = actualNetInput.trim() !== "" && !Number.isNaN(actualNetValue);
-  const deviation = hasActualNet ? actualNetValue - payroll.netPay : 0;
-  const deviationDirection: "less" | "more" | null = hasActualNet && Math.abs(deviation) > 1 ? (deviation < 0 ? "less" : "more") : null;
-  const deviationReasonOptions = deviationDirection ? PAYROLL_DEVIATION_REASONS.filter((r) => r.direction === deviationDirection) : [];
-
-  const detectedFieldMeta = detectedField ? CORRECTABLE_PAYROLL_FIELDS.find((f) => f.id === detectedField) : null;
-  // Only "amount" fields (raw ₪ deductions) get a deterministically-computed suggested value —
-  // rate/points fields need a % or point-value change that isn't a straight ₪-for-₪ swap, so
-  // those are surfaced as an identified cause without an auto-applied number.
-  const currentFieldValue = detectedFieldMeta ? Number((settings as unknown as Record<string, number>)[detectedFieldMeta.id]) || 0 : 0;
-  const suggestedFieldValue = detectedFieldMeta?.kind === "amount" && hasActualNet ? Math.max(0, currentFieldValue - deviation) : undefined;
-
-  const saveActualNet = (overrides: { overrideField?: string | null; overrideValue?: number } = {}) => {
-    if (!hasActualNet) return;
-    // Preserve whatever the full editor already saved for this month (fieldOverrides/extras) —
-    // this simple save path only ever touches the actual-net figure and the single detected-field
-    // override, and must never silently wipe a more detailed correction made elsewhere.
-    const existing = getPayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
-    savePayrollActual({
-      year: currentMonth.getFullYear(),
-      month: currentMonth.getMonth(),
-      actualNet: actualNetValue,
-      estimatedNet: payroll.netPay,
-      reasonId: deviationReasonId,
-      note: deviationNote.trim() || undefined,
-      aiAnalysis: aiAnalysis || undefined,
-      overrideField: overrides.overrideField === null ? undefined : overrides.overrideField ?? detectedField ?? undefined,
-      overrideValue: overrides.overrideValue,
-      fieldOverrides: existing?.fieldOverrides,
-      extraAdditions: existing?.extraAdditions,
-      extraDeductions: existing?.extraDeductions,
-    });
-    setActualsVersion((v) => v + 1);
-    setActualSaved(true);
-  };
-
-  /** Undoes a mistaken entry — clears everything saved for this month (actual net, field
-   * overrides, extras) and reverts to the plain computed estimate. */
-  const clearActualNet = () => {
-    deletePayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
-    setActualNetInput("");
-    setDeviationReasonId(undefined);
-    setDeviationNote("");
-    setAiAnalysis(null);
-    setDetectedField(null);
-    setActualSaved(false);
-    setActualsVersion((v) => v + 1);
-    toast.success("הנתונים בפועל נמחקו — חזרנו לאומדן המחושב");
-  };
-
-  const runAiAnalysis = async () => {
-    if (!hasActualNet) return;
-    setAiAnalysisLoading(true);
-    try {
-      const reasonLabel = deviationReasonOptions.find((r) => r.id === deviationReasonId)?.label;
-      const result = await analyzePayrollDeviation({
-        year: currentMonth.getFullYear(),
-        month: currentMonth.getMonth(),
-        estimatedNet: payroll.netPay,
-        actualNet: actualNetValue,
-        reasonLabel,
-        note: deviationNote,
+  // The daily feed: one message per day that has ended (today only once its shift is closed).
+  const feed = useMemo(() => {
+    if (!settings) return [];
+    const todayKey = dateKey(new Date());
+    const lostByDate = new Map<string, number>();
+    for (const d of deductions) lostByDate.set(d.date, (lostByDate.get(d.date) || 0) + d.amount);
+    return getWorkHoursForMonth(year, month)
+      .filter((w) => {
+        if (w.date > todayKey) return false;
+        const open = (w.status === "worked" || !w.status) && !!w.start_time && !w.end_time && !w.dayParts?.length;
+        if (open) return false;
+        return w.date < todayKey || !!w.dayParts?.length || !!w.end_time || (!!w.status && w.status !== "worked");
+      })
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .map((w) => {
+        const target = getEffectiveDailyTarget(w.date, w, settings);
+        const parts = feedParts(w, target);
+        const { pay, overtimePay } = computeDayPay(w, settings);
+        const lines: string[] = [];
+        const workedHours = parts.filter((p) => p.category === "worked").reduce((s, p) => s + p.hours, 0);
+        const onlyWorked = parts.length > 0 && parts.every((p) => p.category === "worked");
+        if (workedHours > 0.001) {
+          if (onlyWorked && workedHours >= target - 0.01) {
+            lines.push(overtimePay > 0.5 ? "קיבלת שכר מלא על היום, ועוד שעות נוספות." : "קיבלת שכר מלא על היום.");
+          } else if (onlyWorked) {
+            lines.push(`שולם על ${formatHM(workedHours)} שעות עבודה.`);
+          } else {
+            lines.push(`עבדת ${formatHM(workedHours)} שעות — שולמו במלואן.`);
+          }
+        }
+        const seen = new Set<string>();
+        for (const p of parts) {
+          if (p.category === "worked") continue;
+          const key = `${p.category}:${p.paid}`;
+          if (seen.has(key) || !LEAVE_MESSAGE[key]) continue;
+          seen.add(key);
+          lines.push(LEAVE_MESSAGE[key]);
+        }
+        const dominant = parts.length ? parts.reduce((a, b) => (b.hours > a.hours ? b : a)) : null;
+        const isMixed = new Set(parts.map((p) => p.category)).size > 1;
+        return { w, lines, pay, lost: lostByDate.get(w.date) || 0, category: dominant?.category ?? "worked", isMixed };
       });
-      setAiAnalysis(result.explanation);
-      setDetectedField(result.field);
-      setIsDeviationRecurring(result.isRecurring);
-      setAiHistory(result.history);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "שגיאה בניתוח");
-    } finally {
-      setAiAnalysisLoading(false);
-    }
-  };
+  }, [settings, deductions, year, month]);
 
-  /** A deviation over ±50₪ is never left as a silent number — this fires the same deep analysis
-   * automatically (no need to also pick a reason and tap "נתח") the moment it's typed in, keyed so
-   * it only runs once per (month, entered amount) instead of on every keystroke/render. */
-  const maybeAutoAnalyze = () => {
-    if (!hasActualNet || aiAnalysisLoading) return;
-    if (Math.abs(deviation) <= 50) return;
-    const key = `${currentMonth.getFullYear()}-${currentMonth.getMonth()}-${Math.round(actualNetValue)}`;
-    if (autoAnalyzedKey === key) return;
-    setAutoAnalyzedKey(key);
-    void runAiAnalysis();
-  };
+  if (loading || !settings || !payroll || !projected || !toDate) return <LHLoadingScreen />;
 
-  /** Hands the whole investigation off to the free-form AI chat — same conversation history, same
-   * month context — so the user can keep digging, and (if a more serious/systemic bug turns up)
-   * the chat can propose a fix for this or other months via a one-tap confirmation card. */
-  const continueInChat = () => {
-    const reasonLabel = deviationReasonOptions.find((r) => r.id === deviationReasonId)?.label;
-    sessionStorage.setItem(
-      "worktrack_chat_seed",
-      JSON.stringify({
-        contextMonth: { year: currentMonth.getFullYear(), month: currentMonth.getMonth() },
-        history: aiHistory,
-        openingSummary: `ממשיך לחקור את הפער בשכר של ${MONTH_HE[currentMonth.getMonth()]} ${currentMonth.getFullYear()}: משוער ₪${Math.round(payroll.netPay)}, בפועל ₪${Math.round(actualNetValue)}, הפרש ${deviation >= 0 ? "+" : ""}₪${Math.round(deviation)}.${reasonLabel ? ` סיבה שנבחרה: ${reasonLabel}.` : ""}${isDeviationRecurring ? " שים לב: פער דומה חוזר גם בחודשים קודמים." : ""}`,
-      }),
-    );
-    navigate("/design-preview/chat");
-  };
-
-  const applyFixThisMonthOnly = () => {
-    if (!detectedFieldMeta || suggestedFieldValue === undefined) return;
-    saveActualNet({ overrideField: detectedFieldMeta.id, overrideValue: suggestedFieldValue });
-    toast.success(`${detectedFieldMeta.label} תוקן רק לחודש ${MONTH_HE[currentMonth.getMonth()]}`);
-  };
-
-  const applyFixAllFutureMonths = () => {
-    if (!detectedFieldMeta || suggestedFieldValue === undefined || !settings) return;
-    const patch: Partial<UserSettings> = { [detectedFieldMeta.id]: suggestedFieldValue };
-    if (detectedFieldMeta.id.startsWith("manual_") && settings.statutory_deduction_mode !== "manual") {
-      patch.statutory_deduction_mode = "manual";
-    }
-    const nextSettings = { ...settings, ...patch };
-    saveSettings(nextSettings);
-    setSettings(nextSettings);
-    // This month's own record no longer needs a one-off override — the permanent settings change
-    // already covers it (and every future month) going forward.
-    saveActualNet({ overrideField: null });
-    toast.success(`${detectedFieldMeta.label} עודכן לכל המשכורות מכאן ואילך`);
-  };
-
-  const openFullEditor = () => {
-    if (!settings) return;
-    const savedActual = getPayrollActual(currentMonth.getFullYear(), currentMonth.getMonth());
-    const overrides = savedActual?.fieldOverrides ?? (savedActual?.overrideField && savedActual.overrideValue !== undefined ? { [savedActual.overrideField]: savedActual.overrideValue } : undefined);
-    const drafts: Record<string, string> = {};
-    for (const f of CORRECTABLE_PAYROLL_FIELDS) {
-      const value = overrides?.[f.id] ?? (settings as unknown as Record<string, number>)[f.id] ?? 0;
-      drafts[f.id] = String(value);
-    }
-    setFieldDrafts(drafts);
-    setExtraAdditionsDraft(savedActual?.extraAdditions ? savedActual.extraAdditions.map((a) => ({ ...a })) : []);
-    setExtraDeductionsDraft(savedActual?.extraDeductions ? savedActual.extraDeductions.map((d) => ({ ...d })) : []);
-    setFullEditorOpen(true);
-  };
-
-  const draftFieldOverrides = (): Record<string, number> => {
-    const overrides: Record<string, number> = {};
-    for (const f of CORRECTABLE_PAYROLL_FIELDS) {
-      const v = parseFloat(fieldDrafts[f.id]);
-      if (!Number.isNaN(v)) overrides[f.id] = v;
-    }
-    return overrides;
-  };
-
-  const saveFullEditorThisMonth = () => {
-    savePayrollActual({
-      year: currentMonth.getFullYear(),
-      month: currentMonth.getMonth(),
-      actualNet: hasActualNet ? actualNetValue : payroll.netPay,
-      estimatedNet: payroll.netPay,
-      reasonId: deviationReasonId,
-      note: deviationNote.trim() || undefined,
-      aiAnalysis: aiAnalysis || undefined,
-      fieldOverrides: draftFieldOverrides(),
-      extraAdditions: extraAdditionsDraft.filter((a) => a.label.trim() && a.amount > 0),
-      extraDeductions: extraDeductionsDraft.filter((d) => d.label.trim() && d.amount > 0),
-    });
-    setActualsVersion((v) => v + 1);
-    setFullEditorOpen(false);
-    toast.success(`הפרטים עודכנו לחודש ${MONTH_HE[currentMonth.getMonth()]} בלבד`);
-  };
-
-  const saveFullEditorAllFutureMonths = () => {
-    if (!settings) return;
-    const overrides = draftFieldOverrides();
-    const nextSettings = applyPayrollFieldOverrides(settings, overrides);
-    saveSettings(nextSettings);
-    setSettings(nextSettings);
-    // The permanent settings change now covers this field for every month — this record only
-    // needs to keep the one-off extras, which by definition never become permanent.
-    savePayrollActual({
-      year: currentMonth.getFullYear(),
-      month: currentMonth.getMonth(),
-      actualNet: hasActualNet ? actualNetValue : payroll.netPay,
-      estimatedNet: payroll.netPay,
-      reasonId: deviationReasonId,
-      note: deviationNote.trim() || undefined,
-      aiAnalysis: aiAnalysis || undefined,
-      fieldOverrides: undefined,
-      extraAdditions: extraAdditionsDraft.filter((a) => a.label.trim() && a.amount > 0),
-      extraDeductions: extraDeductionsDraft.filter((d) => d.label.trim() && d.amount > 0),
-    });
-    setActualsVersion((v) => v + 1);
-    setFullEditorOpen(false);
-    toast.success("הפרטים עודכנו לכל המשכורות מכאן ואילך");
-  };
+  const forecastGross = grossOf(projected);
+  const accruedGross = isCurrentMonth ? grossOf(toDate) : grossOf(payroll);
+  const heroValue = accruedGross;
+  const progress = isCurrentMonth && forecastGross > 0 ? Math.min(100, (accruedGross / forecastGross) * 100) : 100;
+  const payoutNext = settings.overtime_payout_month === "next";
+  const breakdownSource = isCurrentMonth ? projected : payroll;
+  const breakdown = [
+    { label: "שעות רגילות", amount: breakdownSource.regularPay, color: "#7639FF" },
+    { label: payoutNext ? "שעות נוספות מחודש קודם" : "שעות נוספות", amount: breakdownSource.overtimePay, color: "#00A8CC" },
+    { label: "תוספות קבועות", amount: breakdownSource.fixedComponentsTotal, color: "#0F766E" },
+    { label: "תקציב אוכל", amount: breakdownSource.foodAllowanceAddition, color: "#F59E0B" },
+  ].filter((r) => r.amount > 0.5);
+  const breakdownTotal = breakdown.reduce((s, r) => s + r.amount, 0) || 1;
+  const vacationDeductions = deductions.filter((d) => d.type === "vacation");
+  const sickDeductions = deductions.filter((d) => d.type === "sick");
+  const vacationTotal = vacationDeductions.reduce((s, d) => s + d.amount, 0);
+  const sickTotal = sickDeductions.reduce((s, d) => s + d.amount, 0);
+  const totalDeducted = vacationTotal + sickTotal;
+  const totalHours = payroll.regularHours + payroll.overtimeHours;
 
   return (
     <div dir="rtl" className="min-h-screen w-full flex flex-col" style={{ background: LH.background, color: LH.onSurface, fontFamily: "'Heebo', system-ui, sans-serif" }}>
@@ -414,944 +180,218 @@ export default function DesignPreviewReports() {
         <div className="flex flex-col w-full relative min-h-full max-w-[440px] mx-auto">
           <div className="absolute top-0 right-0 left-0 h-64 blur-3xl pointer-events-none z-0" style={{ background: `${LH.primary}0D` }} />
 
-          {/* Month selector + PDF export */}
-          <div className="pt-6 pb-4 relative z-10 flex items-center justify-center gap-2">
+          {/* Month selector */}
+          <div className="pt-6 pb-2 relative z-10 flex items-center justify-center">
             <div className="bg-white/80 backdrop-blur-xl rounded-full px-6 py-3 flex items-center gap-6 border border-white" style={{ boxShadow: "0 8px 24px rgba(35,50,100,0.05)" }}>
               <button onClick={() => setCurrentMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))} style={{ color: LH.onSurfaceVariant }}>
                 <span className="material-symbols-outlined">chevron_right</span>
               </button>
-              <span className="text-[18px] font-bold" style={{ color: LH.onSurface }}>{MONTH_HE[currentMonth.getMonth()]} {currentMonth.getFullYear()}</span>
+              <span className="text-[18px] font-bold" style={{ color: LH.onSurface }}>{MONTH_HE[month]} {year}</span>
               <button onClick={() => setCurrentMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))} style={{ color: LH.onSurfaceVariant }}>
                 <span className="material-symbols-outlined">chevron_left</span>
               </button>
             </div>
-            <button
-              onClick={async () => {
-                try {
-                  await exportMonthlyPayslipPdf(currentMonth.getFullYear(), currentMonth.getMonth(), settings, getProfileFirstName());
-                  toast.success("התלוש יוצא בהצלחה");
-                } catch {
-                  toast.error("שגיאה בייצוא");
-                }
-              }}
-              title="ייצוא תלוש PDF לחודש הזה"
-              className="w-12 h-12 rounded-full flex items-center justify-center shrink-0 bg-white/80 backdrop-blur-xl border border-white"
-              style={{ boxShadow: "0 8px 24px rgba(35,50,100,0.05)", color: LH.primary }}
-            >
-              <span className="material-symbols-outlined text-[20px]">picture_as_pdf</span>
-            </button>
           </div>
 
-          {/* Hero: net pay to date. Uses the same properly-prorated calculation as "שכר נטו נוכחי"
-              below (for a past/completed month this is identical to the plain full-month payroll —
-              proration only kicks in for the current, still-in-progress month) — `payroll` itself
-              mixes actual to-date hours with FULL flat monthly additions/deductions, which looks
-              badly wrong early in the month, so it's deliberately not used here. */}
-          <div className="lh-rise py-8 flex flex-col items-center justify-center relative z-10">
-            <span className="text-[12px] font-bold tracking-[0.15em] mb-4 uppercase" style={{ color: LH.primary }}>
-              {actualSaved && hasActualNet ? "נטו בפועל (מאושר)" : isCurrentMonth ? "נטו נכון להיום" : "משכורת נטו משוערת"}
+          {/* Hero — what has been earned (gross) so far this month */}
+          <div className="lh-rise py-8 flex flex-col items-center relative z-10">
+            <span className="text-[12px] font-bold tracking-[0.15em] mb-3 uppercase" style={{ color: LH.primary }}>
+              {isCurrentMonth ? "צבור עד היום · ברוטו" : "סה״כ ברוטו לחודש"}
             </span>
             <h1 className="leading-none tracking-tighter tabular-nums" style={{ fontSize: 60, fontWeight: 800, color: LH.onSurface }}>
-              {money(actualSaved && hasActualNet ? actualNetValue : currentToDatePayroll.netPay)}
+              {money(heroValue)}
             </h1>
-            <div className="mt-6 flex items-center gap-2 px-4 py-1.5 rounded-full shadow-sm" style={{ background: LH.surfaceContainerHigh }}>
+            <div className="mt-5 flex items-center gap-2 px-4 py-1.5 rounded-full shadow-sm" style={{ background: LH.surfaceContainerHigh }}>
               <span className="material-symbols-outlined text-[16px]" style={{ color: LH.primary }}>schedule</span>
               <span className="text-[12px] font-bold tracking-[0.08em]" style={{ color: LH.onSurfaceVariant }}>{formatHM(totalHours)} שעות · {payroll.daysWorked} ימי עבודה</span>
             </div>
-            {effectiveHourlyRate <= 0 && (
-              <p className="text-[12px] mt-3" style={{ color: LH.error }}>לא הוגדר שכר שעתי — עדכנו בהגדרות כדי לראות אומדן אמיתי.</p>
+
+            {isCurrentMonth && (
+              <div className="w-full mt-7">
+                <div className="flex items-end justify-between mb-2">
+                  <div>
+                    <span className="text-[10.5px] font-bold tracking-[0.1em] uppercase block" style={{ color: LH.onSurfaceVariant }}>סכום משוער לסוף החודש</span>
+                    <span className="text-[11px] font-medium" style={{ color: "#8892b0" }}>ברוטו, בהנחה שתעבוד לפי הלוח שלך</span>
+                  </div>
+                  <span className="tabular-nums leading-none" dir="ltr" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 26, fontWeight: 800, color: LH.primary }}>
+                    {money(forecastGross)}
+                  </span>
+                </div>
+                <div className="h-3 rounded-full overflow-hidden" style={{ background: "rgba(35,50,100,0.08)" }}>
+                  <div className="h-full rounded-full" style={{ width: `${progress}%`, background: "linear-gradient(90deg,#7639FF,#00D2FF)", transition: "width .9s cubic-bezier(.16,1,.3,1)" }} />
+                </div>
+                <span className="text-[11px] font-bold mt-1.5 block" style={{ color: LH.onSurfaceVariant }}>{Math.round(progress)}% מהסכום המשוער כבר נצבר</span>
+              </div>
+            )}
+            {isCurrentMonth && forecastGross - accruedGross > 0.5 && totalDeducted > 0.5 && (
+              <p className="text-[11px] mt-2 self-start" style={{ color: "#DC2626" }}>הסכום המשוער כבר כולל קיזוז של {money(totalDeducted)} על ימי חופש/מחלה שאינם משולמים.</p>
             )}
           </div>
 
-          {/* Base-salary progress arc — how much of the month's scheduled base pay has been earned,
-              with overtime pushing it past 100%. */}
-          <div className="lh-rise pb-8 relative z-10 w-full flex flex-col items-center" style={{ animationDelay: "60ms" }}>
-            <div className="relative w-64 h-32 overflow-hidden">
-              <svg className="absolute w-full h-full inset-0" viewBox="0 0 100 50">
-                <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke={LH.surfaceVariant} strokeLinecap="round" strokeWidth="6" />
-              </svg>
-              <svg className="absolute w-full h-full inset-0" style={{ filter: "drop-shadow(0 4px 12px rgba(0,1,20,0.2))" }} viewBox="0 0 100 50">
-                <path
-                  d="M 10 50 A 40 40 0 0 1 90 50"
-                  fill="none" stroke="url(#gradient-arc-reports)" strokeLinecap="round" strokeWidth="6"
-                  strokeDasharray={125.6}
-                  strokeDashoffset={125.6 - (arcFillPct / 100) * 125.6}
-                  style={{ transition: "stroke-dashoffset 1s ease" }}
-                />
-                <defs>
-                  <linearGradient id="gradient-arc-reports" x1="0%" x2="100%" y1="0%" y2="0%">
-                    <stop offset="0%" stopColor={bonusFromOvertimePct > 0 ? "#0F766E" : LH.primary} />
-                    <stop offset="100%" stopColor={bonusFromOvertimePct > 0 ? "#19CEA0" : LH.secondary} />
-                  </linearGradient>
-                </defs>
-              </svg>
-              <div className="absolute bottom-0 w-full text-center">
-                <span className="text-[32px] leading-[40px] tracking-[-0.02em] font-bold block" style={{ color: LH.onSurface }}>{Math.round(basePctAchieved)}%</span>
-                <span className="text-[12px] font-bold tracking-[0.08em]" style={{ color: LH.onSurfaceVariant }}>מהמשכורת הבסיסית הושג</span>
-              </div>
-            </div>
-            {bonusFromOvertimePct > 0.5 && (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full -mt-1" style={{ background: "rgba(15,118,110,0.08)" }}>
-                <span className="material-symbols-outlined text-[14px]" style={{ color: "#0F766E" }}>trending_up</span>
-                <span className="text-[11.5px] font-bold" style={{ color: "#0F766E" }}>
-                  {Math.round(bonusFromOvertimePct)}%+ הרווחת מעבר לבסיס בזכות שעות נוספות
+          {/* What the amount is made of — gross components only */}
+          <div className="lh-rise relative z-10 mb-4" style={{ animationDelay: "80ms" }}>
+            <div className="rounded-[28px] p-6" style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}>
+              <div className="flex items-center gap-2 mb-4">
+                <span className="material-symbols-outlined text-[18px]" style={{ color: LH.primary }}>waterfall_chart</span>
+                <span className="text-[13px] font-extrabold tracking-[0.1em] uppercase" style={{ color: LH.onSurfaceVariant }}>
+                  ממה מורכב הסכום{isCurrentMonth ? " · תחזית לסוף החודש" : ""}
                 </span>
               </div>
+              {breakdown.length === 0 ? (
+                <span className="text-[12.5px]" style={{ color: LH.onSurfaceVariant }}>עדיין לא נצבר שכר החודש.</span>
+              ) : (
+                <>
+                  <div className="flex h-2.5 rounded-full overflow-hidden mb-4" style={{ background: "rgba(35,50,100,0.07)" }}>
+                    {breakdown.map((r) => (
+                      <div key={r.label} style={{ width: `${(r.amount / breakdownTotal) * 100}%`, background: r.color }} />
+                    ))}
+                  </div>
+                  <div className="flex flex-col gap-3">
+                    {breakdown.map((r) => (
+                      <div key={r.label} className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full" style={{ background: r.color }} />
+                          <span className="text-[13px] font-semibold" style={{ color: LH.onSurface }}>{r.label}</span>
+                        </div>
+                        <span dir="ltr" className="tabular-nums text-[15px] font-bold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: LH.onSurface }}>+{money(r.amount)}</span>
+                      </div>
+                    ))}
+                    <div className="flex items-center justify-between pt-3" style={{ borderTop: `1px solid ${LH.surfaceVariant}` }}>
+                      <span className="text-[13px] font-extrabold" style={{ color: LH.onSurface }}>סה״כ ברוטו</span>
+                      <span dir="ltr" className="tabular-nums text-[18px] font-extrabold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: LH.primary }}>{money(breakdownTotal)}</span>
+                    </div>
+                  </div>
+                </>
+              )}
+              {payoutNext && payroll.ownOvertimeHours > 0.01 && (
+                <p className="text-[11px] mt-4 leading-snug" style={{ color: LH.onSurfaceVariant }}>
+                  החודש נצברו {formatHM(payroll.ownOvertimeHours)} שעות נוספות ({money(payroll.ownOvertimePay)}) — הן יתווספו לברוטו של החודש הבא.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* The only thing that ever reduces the amount: vacation/sick days that weren't covered */}
+          {deductions.length > 0 && (
+            <div
+              className="lh-rise rounded-[28px] p-6 relative overflow-hidden mb-4 z-10"
+              style={{ animationDelay: "120ms", background: "linear-gradient(165deg, rgba(24,20,34,0.97), rgba(48,20,28,0.96))", boxShadow: "0 20px 50px -12px rgba(220,38,38,0.28)" }}
+            >
+              <div className="absolute -left-10 -top-10 w-44 h-44 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(220,38,38,0.35), transparent 70%)" }} />
+              <div className="absolute -right-14 bottom-0 w-52 h-52 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(251,146,60,0.16), transparent 70%)" }} />
+
+              <div className="flex items-center justify-between relative z-10 mb-5">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "rgba(255,255,255,0.1)" }}>
+                    <span className="material-symbols-outlined text-[18px]" style={{ color: "#F87171" }}>receipt_long</span>
+                  </div>
+                  <span className="text-[13px] font-extrabold tracking-[0.1em] uppercase" style={{ color: "rgba(255,255,255,0.75)" }}>קיזוזים בשכר</span>
+                </div>
+                <span dir="ltr" className="block leading-none" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 26, fontWeight: 800, color: "#fff" }}>
+                  −{money(totalDeducted)}
+                </span>
+              </div>
+
+              <div className={`grid gap-2.5 relative z-10 mb-5 ${vacationDeductions.length > 0 && sickDeductions.length > 0 ? "grid-cols-2" : "grid-cols-1"}`}>
+                {vacationDeductions.length > 0 && (
+                  <div className="rounded-2xl p-3.5" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <span className="material-symbols-outlined text-[15px]" style={{ color: "#60A5FA" }}>beach_access</span>
+                      <span className="text-[10.5px] font-bold" style={{ color: "rgba(255,255,255,0.6)" }}>חריגת חופש · {vacationDeductions.length} ימים</span>
+                    </div>
+                    <span dir="ltr" className="block" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 18, fontWeight: 700, color: "#93C5FD" }}>−{money(vacationTotal)}</span>
+                  </div>
+                )}
+                {sickDeductions.length > 0 && (
+                  <div className="rounded-2xl p-3.5" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <span className="material-symbols-outlined text-[15px]" style={{ color: "#FBBF24" }}>thermostat</span>
+                      <span className="text-[10.5px] font-bold" style={{ color: "rgba(255,255,255,0.6)" }}>חריגת מחלה · {sickDeductions.length} ימים</span>
+                    </div>
+                    <span dir="ltr" className="block" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 18, fontWeight: 700, color: "#FCD34D" }}>−{money(sickTotal)}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-col relative z-10">
+                {deductions.map((d, i) => {
+                  const color = d.type === "vacation" ? "#60A5FA" : "#FBBF24";
+                  const isLast = i === deductions.length - 1;
+                  return (
+                    <div key={`${d.date}-${d.type}`} className="flex gap-3">
+                      <div className="flex flex-col items-center pt-1.5 shrink-0">
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color, boxShadow: `0 0 8px 1px ${color}66` }} />
+                        {!isLast && <span className="w-px flex-1" style={{ background: "rgba(255,255,255,0.14)" }} />}
+                      </div>
+                      <div className={`flex items-center justify-between gap-2 flex-1 ${isLast ? "pb-0" : "pb-4"}`}>
+                        <div className="flex flex-col">
+                          <span className="text-[12.5px] font-bold" style={{ color: "#fff" }}>
+                            {new Date(`${d.date}T00:00:00`).toLocaleDateString("he-IL", { day: "numeric", month: "long" })}
+                          </span>
+                          <span className="text-[11px]" style={{ color: "rgba(255,255,255,0.5)" }}>
+                            {formatHM(d.unpaidHours)} לא משולמות · {d.unpaidDays.toFixed(2)} מיום
+                          </span>
+                        </div>
+                        <span dir="ltr" className="tabular-nums text-[14px] font-bold shrink-0" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color }}>−{money(d.amount)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Daily feed — one plain-language line per finished day */}
+          <div className="lh-rise relative z-10" style={{ animationDelay: "160ms" }}>
+            <div className="flex items-center gap-2 mb-3 px-1">
+              <span className="material-symbols-outlined text-[18px]" style={{ color: LH.primary }}>event_note</span>
+              <h2 className="text-[16px] font-bold" style={{ color: LH.onSurface }}>יומן שכר יומי</h2>
+            </div>
+            {feed.length === 0 ? (
+              <div className="rounded-[24px] p-5 text-[12.5px]" style={{ background: `${LH.onSurfaceVariant}0A`, color: LH.onSurfaceVariant }}>
+                עדיין אין ימים שהסתיימו החודש. כל יום שיסתיים יופיע כאן עם מה שנצבר בו.
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2.5">
+                {feed.map(({ w, lines, pay, lost, category, isMixed }) => {
+                  const d = new Date(`${w.date}T00:00:00`);
+                  const m = STATUS_META[category];
+                  return (
+                    <div
+                      key={w.date}
+                      className="rounded-[22px] p-4 flex items-center gap-3"
+                      style={{ background: "#fff", boxShadow: "0 6px 20px -10px rgba(35,50,100,0.15)", borderInlineStart: `4px solid ${isMixed ? "#7639FF" : m.grad[0]}` }}
+                    >
+                      <div className="flex flex-col items-center shrink-0" style={{ width: 44 }}>
+                        <span className="text-[20px] font-extrabold leading-none tabular-nums" style={{ color: LH.onSurface }}>{d.getDate()}</span>
+                        <span className="text-[10.5px] font-bold mt-1" style={{ color: LH.onSurfaceVariant }}>{WEEKDAY_HE[d.getDay()]}</span>
+                      </div>
+                      <div className="flex-1 min-w-0 flex flex-col gap-1">
+                        {lines.length === 0 ? (
+                          <span className="text-[12.5px] font-medium" style={{ color: LH.onSurfaceVariant }}>אין שכר על היום הזה.</span>
+                        ) : (
+                          lines.map((l) => (
+                            <span key={l} className="text-[12.5px] font-semibold leading-snug" style={{ color: LH.onSurface }}>{l}</span>
+                          ))
+                        )}
+                      </div>
+                      <div className="flex flex-col items-end shrink-0">
+                        <span dir="ltr" className="tabular-nums text-[15px] font-bold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: pay > 0.5 ? "#0F766E" : LH.onSurfaceVariant }}>
+                          +{money(pay)}
+                        </span>
+                        {lost > 0.5 && (
+                          <span dir="ltr" className="tabular-nums text-[11px] font-bold" style={{ color: "#DC2626" }}>−{money(lost)}</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
-
-          {/* Actual net pay reconciliation — what the estimate above should learn from */}
-          <div
-            className="lh-rise pb-8 relative z-10"
-            style={{ animationDelay: "90ms" }}
-          >
-            <div className="rounded-[28px] p-6 relative overflow-hidden" style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}>
-              <div className="flex items-center gap-2 mb-4">
-                <span className="material-symbols-outlined text-[18px]" style={{ color: LH.primary }}>fact_check</span>
-                <span className="text-[13px] font-extrabold tracking-[0.1em] uppercase" style={{ color: LH.onSurfaceVariant }}>שכר נטו בפועל</span>
-              </div>
-
-              <label className="text-[11px] font-bold block mb-1.5" style={{ color: LH.onSurfaceVariant }}>כמה קיבלת בפועל בתלוש של {MONTH_HE[currentMonth.getMonth()]}?</label>
-              <div className="flex items-center gap-2 mb-1">
-                <input
-                  type="number"
-                  value={actualNetInput}
-                  onChange={(e) => { setActualNetInput(e.target.value); setActualSaved(false); }}
-                  onBlur={maybeAutoAnalyze}
-                  placeholder="0"
-                  className="flex-1 h-12 rounded-2xl px-4 text-[18px] font-bold"
-                  style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
-                />
-                <span className="text-[13px] font-bold" style={{ color: LH.onSurfaceVariant }}>₪ נטו</span>
-              </div>
-              <span className="text-[11px]" style={{ color: LH.onSurfaceVariant }}>המערכת חישבה {money(payroll.netPay)} — זה עוזר לאתר איפה יש סטייה ולתקן קדימה.</span>
-
-              {deviationDirection && (
-                <div className="mt-4 flex flex-col gap-3">
-                  <div
-                    className="rounded-2xl px-4 py-3 flex items-center gap-2"
-                    style={{ background: deviationDirection === "less" ? "rgba(220,38,38,0.08)" : "rgba(15,118,110,0.08)" }}
-                  >
-                    <span className="material-symbols-outlined text-[16px]" style={{ color: deviationDirection === "less" ? "#DC2626" : "#0F766E" }}>
-                      {deviationDirection === "less" ? "trending_down" : "trending_up"}
-                    </span>
-                    <span className="text-[12.5px] font-bold" style={{ color: deviationDirection === "less" ? "#DC2626" : "#0F766E" }}>
-                      {deviationDirection === "less" ? "קיבלת פחות מהצפוי" : "קיבלת יותר מהצפוי"} — הפרש של {money(Math.abs(deviation))}
-                    </span>
-                  </div>
-
-                  <div>
-                    <span className="text-[11px] font-bold block mb-2" style={{ color: LH.onSurfaceVariant }}>
-                      {deviationDirection === "less" ? "מה עשוי להסביר את ההורדה?" : "מה עשוי להסביר את התוספת?"}
-                    </span>
-                    <div className="flex flex-wrap gap-2">
-                      {deviationReasonOptions.map((r) => (
-                        <button
-                          key={r.id}
-                          onClick={() => { setDeviationReasonId(r.id); setActualSaved(false); }}
-                          className="px-3 py-1.5 rounded-full text-[11.5px] font-bold"
-                          style={{
-                            background: deviationReasonId === r.id ? LH.primary : `${LH.primary}0F`,
-                            color: deviationReasonId === r.id ? "#fff" : LH.primary,
-                          }}
-                        >
-                          {r.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-bold block mb-1" style={{ color: LH.onSurfaceVariant }}>תיאור חופשי (אופציונלי)</label>
-                    <textarea
-                      value={deviationNote}
-                      onChange={(e) => { setDeviationNote(e.target.value); setActualSaved(false); }}
-                      placeholder='למשל: "השכר היה נמוך יותר בגלל יום מחלה שלא דיווחתי במערכת"'
-                      rows={2}
-                      className="w-full rounded-2xl px-3 py-2 text-[13px] resize-none"
-                      style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
-                    />
-                  </div>
-
-                  <button
-                    onClick={() => void runAiAnalysis()}
-                    disabled={aiAnalysisLoading}
-                    className="w-full h-11 rounded-2xl font-bold text-white flex items-center justify-center gap-2 disabled:opacity-60"
-                    style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)" }}
-                  >
-                    <span className="material-symbols-outlined text-[18px]">auto_awesome</span>
-                    {aiAnalysisLoading ? "מנתח..." : "נתח עם AI"}
-                  </button>
-
-                  {Math.abs(deviation) > 50 && !aiAnalysis && !aiAnalysisLoading && (
-                    <div className="flex items-center gap-2 rounded-2xl px-4 py-2.5" style={{ background: "rgba(220,38,38,0.08)" }}>
-                      <span className="material-symbols-outlined text-[16px]" style={{ color: "#DC2626" }}>error</span>
-                      <span className="text-[11.5px] font-bold" style={{ color: "#DC2626" }}>הפרש מעל 50 ₪ — פתחו חקירה עם AI כדי להבין למה, לא רק לרשום את זה.</span>
-                    </div>
-                  )}
-
-                  {isDeviationRecurring && (
-                    <div className="flex items-center gap-2 rounded-2xl px-4 py-3" style={{ background: "rgba(217,119,6,0.1)", border: "1px solid rgba(217,119,6,0.25)" }}>
-                      <span className="material-symbols-outlined text-[18px]" style={{ color: "#B45309" }}>history</span>
-                      <span className="text-[12px] font-bold" style={{ color: "#B45309" }}>פער דומה חוזר גם בחודשים קודמים — זה כנראה הגדרה קבועה שגויה, לא טעות חד-פעמית.</span>
-                    </div>
-                  )}
-
-                  {aiAnalysis && (
-                    <div className="rounded-2xl px-4 py-3" style={{ background: `${LH.primary}0A` }}>
-                      <span className="text-[10.5px] font-bold tracking-[0.08em] uppercase block mb-1.5" style={{ color: LH.primary }}>ניתוח ה-AI</span>
-                      <p className="text-[12.5px] leading-relaxed whitespace-pre-line" style={{ color: LH.onSurface }}>{aiAnalysis}</p>
-                    </div>
-                  )}
-
-                  {detectedFieldMeta && (
-                    <div className="rounded-2xl p-4" style={{ background: "rgba(15,118,110,0.06)", border: "1px solid rgba(15,118,110,0.2)" }}>
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <span className="material-symbols-outlined text-[16px]" style={{ color: "#0F766E" }}>target</span>
-                        <span className="text-[12px] font-bold" style={{ color: "#0F766E" }}>זוהה שדה ספציפי: {detectedFieldMeta.label}</span>
-                      </div>
-                      {suggestedFieldValue !== undefined ? (
-                        <>
-                          <div className="flex items-center gap-2 mb-3 text-[12.5px]" style={{ color: LH.onSurface }}>
-                            <span>ערך נוכחי: <b>{money(currentFieldValue)}</b></span>
-                            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
-                            <span>מוצע: <b>{money(suggestedFieldValue)}</b></span>
-                          </div>
-                          <div className="flex gap-2">
-                            <button onClick={applyFixThisMonthOnly} className="flex-1 h-10 rounded-xl text-[12px] font-bold" style={{ background: "rgba(35,50,100,0.06)", color: LH.onSurface }}>
-                              עדכון רק לחודש הזה
-                            </button>
-                            <button onClick={applyFixAllFutureMonths} className="flex-1 h-10 rounded-xl text-[12px] font-bold text-white" style={{ background: "#0F766E" }}>
-                              עדכון מכאן ואילך
-                            </button>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <p className="text-[12px] mb-3" style={{ color: LH.onSurfaceVariant }}>
-                            {detectedFieldMeta.kind === "gross"
-                              ? "זה שדה שקובע את הברוטו כולו (לא ניכוי ישיר), אז אי אפשר להציע ערך מדויק אוטומטית — אבל זו הסיבה הכי נפוצה לפער. פתחו את עורך פרטי השכר למטה כדי לתקן אותו."
-                              : "זה שדה שמוגדר כאחוז, ולא ניתן להציע ערך מדויק אוטומטית — כדאי לעדכן אותו ידנית בהגדרות → ניכויי חובה ופנסיה, או דרך עורך פרטי השכר למטה."}
-                          </p>
-                          <button onClick={openFullEditor} className="w-full h-10 rounded-xl text-[12px] font-bold text-white" style={{ background: "#0F766E" }}>
-                            פתיחת עורך פרטי השכר
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  )}
-
-                  {aiAnalysis && (
-                    <button
-                      onClick={continueInChat}
-                      className="w-full rounded-2xl p-4 flex items-center gap-3 text-right relative overflow-hidden transition-transform active:scale-[0.98]"
-                      style={{ background: "linear-gradient(155deg,#101A46,#3B4FA0)", boxShadow: "0 14px 32px -10px rgba(16,26,70,0.4)" }}
-                    >
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.14)" }}>
-                        <span className="material-symbols-outlined text-white" style={{ fontSize: 20 }}>forum</span>
-                      </div>
-                      <div className="min-w-0">
-                        <span className="text-[13.5px] font-bold text-white block">המשך בצ׳אט חופשי</span>
-                        <span className="text-[11px] font-medium block" style={{ color: "rgba(255,255,255,0.75)" }}>אותה חקירה, אפשר לשאול עוד — כולל תיקונים לחודשים אחרים אם יש באג רציני</span>
-                      </div>
-                      <span className="material-symbols-outlined text-white shrink-0" style={{ fontSize: 20 }}>chevron_left</span>
-                    </button>
-                  )}
-                </div>
-              )}
-
-              <div className="flex gap-2 mt-4">
-                <button
-                  onClick={() => { saveActualNet(); maybeAutoAnalyze(); toast.success("נשמר"); }}
-                  disabled={!hasActualNet}
-                  className="flex-1 h-11 rounded-2xl font-bold disabled:opacity-50"
-                  style={{ background: actualSaved ? "rgba(15,118,110,0.1)" : `${LH.primary}0F`, color: actualSaved ? "#0F766E" : LH.primary }}
-                >
-                  {actualSaved ? "נשמר ✓" : "שמירה"}
-                </button>
-                {actualSaved && (
-                  <button
-                    onClick={clearActualNet}
-                    title="מחיקת הנתונים בפועל וחזרה לאומדן"
-                    className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0"
-                    style={{ background: "rgba(220,38,38,0.08)", color: "#DC2626" }}
-                  >
-                    <span className="material-symbols-outlined text-[19px]">restart_alt</span>
-                  </button>
-                )}
-              </div>
-
-              {/* Only appears once a real actual-net figure has been entered — that's the moment
-                  editing the underlying breakdown becomes meaningful. */}
-              {hasActualNet && (
-                <button
-                  onClick={openFullEditor}
-                  className="w-full mt-3 rounded-2xl p-4 flex items-center gap-3 text-right relative overflow-hidden transition-transform active:scale-[0.98]"
-                  style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 14px 32px -10px rgba(118,57,255,0.45)" }}
-                >
-                  <div className="absolute -left-6 -bottom-8 w-28 h-28 rounded-full pointer-events-none" style={{ background: "rgba(255,255,255,0.14)", filter: "blur(18px)" }} />
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 relative z-10" style={{ background: "rgba(255,255,255,0.18)" }}>
-                    <span className="material-symbols-outlined text-white" style={{ fontSize: 20 }}>tune</span>
-                  </div>
-                  <div className="min-w-0 relative z-10">
-                    <span className="text-[13.5px] font-bold text-white block">עריכת כל פרטי השכר</span>
-                    <span className="text-[11px] font-medium block" style={{ color: "rgba(255,255,255,0.8)" }}>מס, ביטוח לאומי, בריאות, שכר שעתי, תוספות וניכויים חד-פעמיים</span>
-                  </div>
-                  <span className="material-symbols-outlined text-white relative z-10 shrink-0" style={{ fontSize: 20 }}>chevron_left</span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Payroll breakdown */}
-          <div className="lh-rise pb-8 relative z-10" style={{ animationDelay: "120ms" }}>
-            <div className="grid grid-cols-2 gap-5">
-              <div className="rounded-[24px] p-5 relative overflow-hidden" style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}>
-                <span className="text-[12px] font-bold tracking-[0.08em] block mb-1" style={{ color: LH.onSurfaceVariant }}>שעות רגילות</span>
-                <span className="text-[20px] leading-[28px] font-bold tracking-tight tabular-nums" style={{ color: LH.onSurface }}>{formatHM(payroll.regularHours)}</span>
-                <div className="text-[13px] font-bold mt-1 tabular-nums" style={{ color: LH.primary }}>{money(payroll.regularPay)}</div>
-              </div>
-              <div className="rounded-[24px] p-5 relative overflow-hidden col-span-1" style={{ background: LH.primary, color: LH.onPrimary, boxShadow: "0 16px 45px rgba(0,1,20,0.15)" }}>
-                <span className="text-[12px] font-bold tracking-[0.08em] block mb-1" style={{ color: "rgba(255,255,255,0.7)" }}>שעות נוספות</span>
-                <span className="text-[20px] leading-[28px] font-bold tracking-tight tabular-nums">{formatHM(payroll.overtimeHours)}</span>
-                <div className="text-[13px] font-bold mt-1 tabular-nums">{money(payroll.overtimePay)}</div>
-                {settings.overtime_payout_month === "next" && payroll.overtimeHours > 0 && (
-                  <div className="mt-2.5 pt-2.5 flex items-center gap-1" style={{ borderTop: "1px solid rgba(255,255,255,0.18)" }}>
-                    <span className="material-symbols-outlined text-[12px]" style={{ color: "rgba(255,255,255,0.75)" }}>history</span>
-                    <span className="text-[9.5px] font-semibold leading-tight" style={{ color: "rgba(255,255,255,0.75)" }}>
-                      מתלוש {MONTH_HE[(currentMonth.getMonth() + 11) % 12]}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* Deferred-overtime tracker — this month's own accrual, which will carry into the
-                  black tile above once next month's payslip is viewed; kept as its own card so
-                  it reads clearly rather than as a cramped note. */}
-              {settings.overtime_payout_month === "next" && (
-                <div
-                  className="rounded-[24px] p-5 col-span-2 relative overflow-hidden flex items-center gap-4"
-                  style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}
-                >
-                  <div className="min-w-0 flex-1 text-right">
-                    <span className="text-[12px] font-bold tracking-[0.05em] block mb-0.5" style={{ color: LH.onSurfaceVariant }}>
-                      שעות נוספות שנצברו החודש · יופיעו בתלוש {MONTH_HE[(currentMonth.getMonth() + 1) % 12]}
-                    </span>
-                    <div className="flex items-baseline gap-2">
-                      <span
-                        className="tabular-nums leading-none"
-                        style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: "#00A8CC" }}
-                      >
-                        {formatHM(payroll.ownOvertimeHours)}
-                      </span>
-                      <span className="tabular-nums text-[15px] font-bold" style={{ color: "#00A8CC" }}>{money(payroll.ownOvertimePay)}</span>
-                    </div>
-                  </div>
-                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "linear-gradient(155deg,#00A8CC,#00D2FF)", boxShadow: "0 12px 26px -8px rgba(0,168,204,0.5)" }}>
-                    <span className="material-symbols-outlined text-white text-[24px]">sync_alt</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Money flow — a visual journey from gross to net, not a receipt list */}
-              <div
-                className="rounded-[30px] p-6 relative overflow-hidden col-span-2"
-                style={{
-                  background: "rgba(255,255,255,0.72)",
-                  backdropFilter: "blur(30px)",
-                  border: "1px solid rgba(255,255,255,0.9)",
-                  boxShadow: "0 24px 48px rgba(35,50,100,0.06)",
-                }}
-              >
-                <div className="absolute -right-16 -top-16 w-56 h-56 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(118,57,255,0.1), transparent 70%)", filter: "blur(14px)" }} />
-                <div className="absolute -left-16 bottom-0 w-56 h-56 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(0,210,255,0.09), transparent 70%)", filter: "blur(14px)" }} />
-
-                <div className="flex items-center gap-2 mb-1 relative z-10">
-                  <span className="material-symbols-outlined text-[18px]" style={{ color: LH.primary }}>waterfall_chart</span>
-                  <span className="text-[13px] font-extrabold tracking-[0.14em] uppercase" style={{ color: LH.onSurfaceVariant }}>מסע התשלום</span>
-                </div>
-                {isCurrentMonth && (
-                  <div className="mb-5 relative z-10">
-                    <span className="text-[10.5px] font-semibold" style={{ color: "#8892b0" }}>תחזית מלאה לסוף החודש — כולל ימים שטרם הגיעו, לפי לוח העבודה שלך</span>
-                  </div>
-                )}
-
-                {/* No net figure here — that already lives at the top of the page (today's actual
-                    net). This card is purely about where the money moves: actual gross earned so
-                    far (small, factual, not a projection) beside the two totals that explain the
-                    forecasted deductions/additions further down. */}
-                <div className="relative z-10 mb-5">
-                  <div className="flex flex-wrap gap-x-8 gap-y-3">
-                    <div>
-                      <span className="text-[10px] font-bold tracking-[0.1em] uppercase block mb-1" style={{ color: "#0F766E" }}>תוספות שכר</span>
-                      <span
-                        className="block leading-none"
-                        dir="ltr"
-                        style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em", color: "#0F766E" }}
-                      >
-                        +{money(additionsGrandTotal)}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-bold tracking-[0.1em] uppercase block mb-1" style={{ color: "#DC2626" }}>
-                        סך הכל ניכויים{isCurrentMonth ? " · תחזית" : ""}
-                      </span>
-                      <span
-                        className="block leading-none"
-                        dir="ltr"
-                        style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em", color: "#DC2626" }}
-                      >
-                        −{money(deductionsGrandTotal)}
-                      </span>
-                    </div>
-                  </div>
-                  {/* Composition bar: base hours / overtime / additions */}
-                  <div className="flex h-2.5 rounded-full overflow-hidden mt-3.5" style={{ background: "rgba(35,50,100,0.07)" }}>
-                    {[
-                      { v: projectedPayroll.regularPay, c: "linear-gradient(90deg,#7639FF,#9B6DFF)" },
-                      { v: projectedPayroll.overtimePay, c: "linear-gradient(90deg,#00A8CC,#00D2FF)" },
-                      { v: projectedPayroll.fixedComponentsTotal, c: "linear-gradient(90deg,#0F766E,#19CEA0)" },
-                      { v: projectedPayroll.foodAllowanceAddition, c: "linear-gradient(90deg,#F59E0B,#FB923C)" },
-                    ].map((seg, i) =>
-                      seg.v > 0 ? (
-                        <div key={i} style={{ width: `${(seg.v / (forecastGrossTotal || 1)) * 100}%`, background: seg.c, transition: "width .9s cubic-bezier(.16,1,.3,1)" }} />
-                      ) : null,
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2.5">
-                    {[
-                      { label: "שעות רגילות", v: projectedPayroll.regularPay, c: "#7639FF" },
-                      { label: "שעות נוספות", v: projectedPayroll.overtimePay, c: "#00A8CC" },
-                      { label: "תוספות", v: projectedPayroll.fixedComponentsTotal, c: "#0F766E" },
-                      { label: "תקציב אוכל", v: projectedPayroll.foodAllowanceAddition, c: "#F59E0B" },
-                    ].map((seg) =>
-                      seg.v > 0 ? (
-                        <div key={seg.label} className="flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: seg.c }} />
-                          <span className="text-[10.5px] font-semibold" style={{ color: LH.onSurfaceVariant }}>{seg.label}</span>
-                        </div>
-                      ) : null,
-                    )}
-                  </div>
-                </div>
-
-                {/* Additions — each item as a tinted chip */}
-                {((settings.fixed_components && settings.fixed_components.length > 0) || projectedPayroll.foodAllowanceAddition > 0) && (
-                  <div className="relative z-10 mb-4">
-                    <span className="text-[10px] font-bold tracking-[0.14em] uppercase block mb-2.5" style={{ color: "#0F766E" }}>תוספות</span>
-                    <div className="grid grid-cols-2 gap-2">
-                      {(settings.fixed_components || []).map((c, i) => (
-                        <div key={`fc-${i}`} className="rounded-2xl px-3 py-2.5 relative overflow-hidden" style={{ background: "rgba(15,118,110,0.07)", border: "1px solid rgba(15,118,110,0.18)" }}>
-                          <span className="text-[11px] font-semibold block truncate" style={{ color: LH.onSurfaceVariant }}>{c.label}</span>
-                          <span dir="ltr" className="text-[16px] font-bold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: "#0F766E" }}>+{money(c.amount)}</span>
-                        </div>
-                      ))}
-                      {projectedPayroll.foodAllowanceAddition > 0 && (
-                        <div className="rounded-2xl px-3 py-2.5 relative overflow-hidden" style={{ background: "rgba(245,158,11,0.09)", border: "1px solid rgba(245,158,11,0.24)" }}>
-                          <span className="text-[11px] font-semibold block truncate" style={{ color: LH.onSurfaceVariant }}>תקציב אוכל</span>
-                          <span dir="ltr" className="text-[16px] font-bold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: "#B45309" }}>+{money(projectedPayroll.foodAllowanceAddition)}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Deductions — statutory (income tax / NI / health / pension / training fund) + manual, bars sized by share of the
-                    full projected gross, so mid-month already shows what each category will actually withhold by month-end. */}
-                {(() => {
-                  const s = projectedPayroll.statutory;
-                  const statutoryItems: { label: string; amount: number }[] = [
-                    s.incomeTax > 0 && { label: "מס הכנסה", amount: s.incomeTax },
-                    s.nationalInsurance > 0 && { label: "ביטוח לאומי", amount: s.nationalInsurance },
-                    s.healthInsurance > 0 && { label: "ביטוח בריאות", amount: s.healthInsurance },
-                    s.pensionEmployee > 0 && { label: "פנסיה", amount: s.pensionEmployee },
-                    s.trainingFundEmployee > 0 && { label: "קרן השתלמות", amount: s.trainingFundEmployee },
-                  ].filter(Boolean) as { label: string; amount: number }[];
-                  const foodItems: { label: string; amount: number }[] =
-                    projectedPayroll.foodExpenseDeduction > 0 ? [{ label: "הוצאות אוכל שדווחו", amount: projectedPayroll.foodExpenseDeduction }] : [];
-                  const allDeductions = [...statutoryItems, ...(settings.deductions || []), ...foodItems];
-                  if (allDeductions.length === 0) return null;
-                  return (
-                  <div className="relative z-10 mb-5">
-                    <span className="text-[10px] font-bold tracking-[0.14em] uppercase block mb-2.5" style={{ color: "#DC2626" }}>ניכויים{isCurrentMonth ? " · תחזית לסוף החודש" : ""}</span>
-                    <div className="flex flex-col gap-2.5">
-                      {allDeductions.map((d, i) => {
-                        const share = forecastGrossTotal > 0 ? (d.amount / forecastGrossTotal) * 100 : 0;
-                        return (
-                          <div key={`ded-${i}`}>
-                            <div className="flex items-baseline justify-between mb-1">
-                              <span className="text-[11.5px] font-semibold" style={{ color: LH.onSurface }}>{d.label}</span>
-                              <div className="flex items-baseline gap-1.5">
-                                <span className="text-[9.5px] font-bold" style={{ color: "#A0ABC0" }}>{share.toFixed(1)}%</span>
-                                <span dir="ltr" className="text-[13px] font-bold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: "#DC2626" }}>−{money(d.amount)}</span>
-                              </div>
-                            </div>
-                            <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(35,50,100,0.07)" }}>
-                              <div
-                                className="h-full rounded-full"
-                                style={{ width: `${Math.min(100, share)}%`, background: "linear-gradient(90deg,#DC2626,#F87171)", transition: "width .9s cubic-bezier(.16,1,.3,1)" }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  );
-                })()}
-
-              </div>
-
-              {payroll.unpaidLeaveDays > 0 && (
-                <div className="rounded-[24px] p-5 col-span-2 flex items-center gap-3" style={{ background: `${LH.error}0D`, border: `1px solid ${LH.error}26` }}>
-                  <span className="material-symbols-outlined" style={{ color: LH.error }}>info</span>
-                  <span className="text-[13px] font-medium" style={{ color: LH.onSurface }}>
-                    {payroll.unpaidLeaveDays.toFixed(1)} ימי חופש/מחלה לא משולמים החודש — לא נכללים בשכר.
-                  </span>
-                </div>
-              )}
-              {payroll.unpaidOffDays > 0 && (
-                <div className="rounded-[24px] p-5 col-span-2 flex items-center gap-3" style={{ background: `${LH.error}0D`, border: `1px solid ${LH.error}26` }}>
-                  <span className="material-symbols-outlined" style={{ color: LH.error }}>event_busy</span>
-                  <span className="text-[13px] font-medium" style={{ color: LH.onSurface }}>
-                    {payroll.unpaidOffDays.toFixed(1)} ימי "לא עובד" החודש — לא נכללים בשכר.
-                  </span>
-                </div>
-              )}
-              {payroll.holidayDays > 0 && (
-                <div className="rounded-[24px] p-5 col-span-2 flex items-center gap-3" style={{ background: "rgba(25,206,160,0.08)", border: "1px solid rgba(25,206,160,0.22)" }}>
-                  <span className="material-symbols-outlined" style={{ color: "#0F766E" }}>celebration</span>
-                  <span className="text-[13px] font-medium" style={{ color: LH.onSurface }}>
-                    {payroll.holidayDays.toFixed(1)} ימי חג משולמים במלואם החודש — לא נגרעו מיתרת החופש/מחלה.
-                  </span>
-                </div>
-              )}
-
-              {/* Month-end salary forecast — a plain button, not an always-open card; the full
-                  gross/net breakdown lives in the dialog it opens. Once the user has confirmed the
-                  real net they received for this month, this stops being an "estimate" and becomes
-                  a verified report — the actual figure replaces the projected one as the headline. */}
-              <button
-                onClick={() => setSalaryForecastOpen(true)}
-                className="col-span-2 rounded-[24px] p-5 flex items-center justify-between gap-3 text-right transition-transform active:scale-[0.98]"
-                style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: actualSaved ? "rgba(15,118,110,0.08)" : `${LH.primary}0F` }}>
-                    <span className="material-symbols-outlined text-[22px]" style={{ color: actualSaved ? "#0F766E" : LH.primary }}>{actualSaved ? "verified" : "payments"}</span>
-                  </div>
-                  <div className="min-w-0">
-                    <span className="text-[14px] font-bold block truncate" style={{ color: LH.onSurface }}>{actualSaved ? "דוח משכורת" : "משכורת צפויה בסוף החודש"}</span>
-                    <span className="text-[11px] font-medium" style={{ color: LH.onSurfaceVariant }}>{actualSaved ? "מבוסס על השכר שאישרת שקיבלת · לחיצה לפרטים" : "ברוטו ונטו · לחיצה לפרטים"}</span>
-                  </div>
-                </div>
-                <span className="material-symbols-outlined text-[22px] shrink-0" style={{ color: LH.onSurfaceVariant }}>chevron_left</span>
-              </button>
-
-              {/* Every ₪ deduction this month from vacation/sick coverage falling short — whether the
-                  balance ran out entirely or only partially (a "יום מגוון" overflow-split day) — one
-                  line per exact date on a shared timeline, so the reason and the amount are always
-                  fully transparent, right between the month-end forecast and today's real net. */}
-              {unpaidLeaveDeductions.length > 0 && (
-                <div
-                  className="col-span-2 rounded-[28px] p-6 relative overflow-hidden"
-                  style={{ background: "linear-gradient(165deg, rgba(24,20,34,0.97), rgba(48,20,28,0.96))", boxShadow: "0 20px 50px -12px rgba(220,38,38,0.28)" }}
-                >
-                  <div className="absolute -left-10 -top-10 w-44 h-44 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(220,38,38,0.35), transparent 70%)" }} />
-                  <div className="absolute -right-14 bottom-0 w-52 h-52 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(251,146,60,0.16), transparent 70%)" }} />
-
-                  <div className="flex items-center justify-between relative z-10 mb-5">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "rgba(255,255,255,0.1)" }}>
-                        <span className="material-symbols-outlined text-[18px]" style={{ color: "#F87171" }}>receipt_long</span>
-                      </div>
-                      <span className="text-[13px] font-extrabold tracking-[0.1em] uppercase" style={{ color: "rgba(255,255,255,0.75)" }}>קיזוזים בשכר</span>
-                    </div>
-                    <div className="text-left">
-                      <span dir="ltr" className="block leading-none" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 26, fontWeight: 800, color: "#fff" }}>
-                        −{money(totalDeductionsAmount)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Per-category mini stats — only the categories actually hit this month */}
-                  <div className={`grid gap-2.5 relative z-10 mb-5 ${vacationDeductions.length > 0 && sickDeductions.length > 0 ? "grid-cols-2" : "grid-cols-1"}`}>
-                    {vacationDeductions.length > 0 && (
-                      <div className="rounded-2xl p-3.5" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                        <div className="flex items-center gap-1.5 mb-1.5">
-                          <span className="material-symbols-outlined text-[15px]" style={{ color: "#60A5FA" }}>beach_access</span>
-                          <span className="text-[10.5px] font-bold" style={{ color: "rgba(255,255,255,0.6)" }}>חריגת חופש · {vacationDeductions.length} ימים</span>
-                        </div>
-                        <span dir="ltr" className="block" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 18, fontWeight: 700, color: "#93C5FD" }}>
-                          −{money(vacationDeductionsTotal)}
-                        </span>
-                      </div>
-                    )}
-                    {sickDeductions.length > 0 && (
-                      <div className="rounded-2xl p-3.5" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                        <div className="flex items-center gap-1.5 mb-1.5">
-                          <span className="material-symbols-outlined text-[15px]" style={{ color: "#FBBF24" }}>thermostat</span>
-                          <span className="text-[10.5px] font-bold" style={{ color: "rgba(255,255,255,0.6)" }}>חריגת מחלה · {sickDeductions.length} ימים</span>
-                        </div>
-                        <span dir="ltr" className="block" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 18, fontWeight: 700, color: "#FCD34D" }}>
-                          −{money(sickDeductionsTotal)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Shared timeline — both categories merged, sorted by date, each dot in its own category color */}
-                  <div className="flex flex-col relative z-10">
-                    {unpaidLeaveDeductions.map((d, i) => {
-                      const color = d.type === "vacation" ? "#60A5FA" : "#FBBF24";
-                      const isLast = i === unpaidLeaveDeductions.length - 1;
-                      return (
-                        <div key={`${d.date}-${d.type}`} className="flex gap-3">
-                          <div className="flex flex-col items-center pt-1.5 shrink-0">
-                            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color, boxShadow: `0 0 8px 1px ${color}66` }} />
-                            {!isLast && <span className="w-px flex-1" style={{ background: "rgba(255,255,255,0.14)" }} />}
-                          </div>
-                          <div className={`flex items-center justify-between gap-2 flex-1 ${isLast ? "pb-0" : "pb-4"}`}>
-                            <div className="flex flex-col">
-                              <span className="text-[12.5px] font-bold" style={{ color: "#fff" }}>
-                                {new Date(`${d.date}T00:00:00`).toLocaleDateString("he-IL", { day: "numeric", month: "long" })}
-                              </span>
-                              <span className="text-[11px]" style={{ color: "rgba(255,255,255,0.5)" }}>
-                                {formatHM(d.unpaidHours)} לא משולמות · {d.unpaidDays.toFixed(2)} מיום
-                              </span>
-                            </div>
-                            <span dir="ltr" className="tabular-nums text-[14px] font-bold shrink-0" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color }}>
-                              −{money(d.amount)}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Net pay exactly as it stands right now — deductions/additions prorated to date,
-                  not projected to month-end. Only meaningful mid-month. */}
-              {isCurrentMonth && (
-                <button
-                  onClick={() => setCurrentNetOpen(true)}
-                  className="col-span-2 rounded-[24px] p-5 flex items-center justify-between gap-3 text-right transition-transform active:scale-[0.98]"
-                  style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "rgba(15,118,110,0.08)" }}>
-                      <span className="material-symbols-outlined text-[22px]" style={{ color: "#0F766E" }}>account_balance_wallet</span>
-                    </div>
-                    <div className="min-w-0">
-                      <span className="text-[14px] font-bold block truncate" style={{ color: LH.onSurface }}>שכר נטו נוכחי</span>
-                      <span className="text-[11px] font-medium" style={{ color: LH.onSurfaceVariant }}>נכון להיום · כולל ניכויים ותוספות יחסיים</span>
-                    </div>
-                  </div>
-                  <span className="material-symbols-outlined text-[22px] shrink-0" style={{ color: LH.onSurfaceVariant }}>chevron_left</span>
-                </button>
-              )}
-
-              {/* Saved payslip PDF for the month currently being viewed — the last 3 months are
-                  archived automatically; older ones are fetched on demand from Supabase. */}
-              {!isCurrentMonth &&
-                (archivedPdfLoading ? (
-                  <div className="col-span-2 rounded-[24px] p-5 flex items-center gap-3" style={{ background: `${LH.surface}CC`, border: "1px solid rgba(255,255,255,0.5)" }}>
-                    <div className="w-5 h-5 rounded-full border-2 animate-spin" style={{ borderColor: `${LH.primary}33`, borderTopColor: LH.primary }} />
-                    <span className="text-[12.5px] font-medium" style={{ color: LH.onSurfaceVariant }}>בודק אם יש תלוש שמור לחודש זה...</span>
-                  </div>
-                ) : archivedPdf ? (
-                  <button
-                    onClick={() => handleDownloadArchivedPdf(archivedPdf)}
-                    className="col-span-2 rounded-[24px] p-5 flex items-center justify-between gap-3 text-right transition-transform active:scale-[0.98]"
-                    style={{ background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "rgba(15,118,110,0.08)" }}>
-                        <span className="material-symbols-outlined text-[22px]" style={{ color: "#0F766E" }}>folder_managed</span>
-                      </div>
-                      <div className="min-w-0">
-                        <span className="text-[14px] font-bold block truncate" style={{ color: LH.onSurface }}>תלוש שכר שמור</span>
-                        <span className="text-[11px] font-medium" style={{ color: LH.onSurfaceVariant }}>{MONTH_HE[archivedPdf.month]} {archivedPdf.year} · לחיצה להורדה</span>
-                      </div>
-                    </div>
-                    <span className="material-symbols-outlined text-[22px] shrink-0" style={{ color: LH.onSurfaceVariant }}>download</span>
-                  </button>
-                ) : (
-                  <div className="col-span-2 rounded-[24px] p-5 flex items-center gap-3" style={{ background: `${LH.onSurfaceVariant}0A`, border: "1px solid rgba(35,50,100,0.06)" }}>
-                    <span className="material-symbols-outlined" style={{ color: LH.onSurfaceVariant }}>folder_off</span>
-                    <span className="text-[12.5px] font-medium" style={{ color: LH.onSurfaceVariant }}>אין תלוש שמור לחודש {MONTH_HE[currentMonth.getMonth()]} {currentMonth.getFullYear()}.</span>
-                  </div>
-                ))}
-            </div>
-          </div>
-
         </div>
       </main>
       <LHBottomNav active="reports" foodEnabled={!!settings.food_card_enabled} />
-
-      {/* Salary forecast — opened from the button above, not shown inline */}
-      <Dialog open={salaryForecastOpen} onOpenChange={setSalaryForecastOpen}>
-        <DialogContent className="max-w-md rounded-[28px] p-6" style={{ background: LH.background }} dir="rtl">
-          <DialogHeader>
-            <div className="flex items-center gap-2.5 justify-end">
-              <DialogTitle style={{ color: LH.onSurface }}>{actualSaved ? "דוח משכורת" : "משכורת צפויה בסוף החודש"}</DialogTitle>
-              <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: actualSaved ? "rgba(15,118,110,0.08)" : `${LH.primary}0F` }}>
-                <span className="material-symbols-outlined text-[18px]" style={{ color: actualSaved ? "#0F766E" : LH.primary }}>{actualSaved ? "verified" : "payments"}</span>
-              </div>
-            </div>
-          </DialogHeader>
-
-          <div className="flex flex-col gap-3 mt-2">
-            {/* Net — the headline figure. Once the user has confirmed the real net pay they
-                received, that verified figure replaces the projection here — this is no longer an
-                estimate for this month. */}
-            <div className="rounded-[22px] p-5" style={{ background: actualSaved ? "#0F766E" : LH.primary }}>
-              <span className="text-[11px] font-bold tracking-[0.1em] uppercase block mb-1" style={{ color: "rgba(255,255,255,0.65)" }}>{actualSaved ? "נטו (בפועל)" : "נטו"}</span>
-              <span dir="ltr" className="block tabular-nums leading-none" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.02em", color: "#fff" }}>
-                {money(actualSaved && hasActualNet ? actualNetValue : projectedPayroll.netPay)}
-              </span>
-            </div>
-
-            {/* Gross — secondary, plain row */}
-            <div className="flex items-center justify-between rounded-[18px] px-5 py-4" style={{ background: LH.surfaceContainerLow }}>
-              <span className="text-[13px] font-bold" style={{ color: LH.onSurfaceVariant }}>ברוטו</span>
-              <span dir="ltr" className="tabular-nums" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.01em", color: LH.onSurface }}>
-                {money(grossDisplayTotal)}
-              </span>
-            </div>
-
-            {/* Overtime — broken out on its own with the month it's actually sourced from, since
-                a deferred-payout setting can mean this month's net includes LAST month's overtime
-                instead of this month's own. */}
-            {projectedPayroll.overtimePay > 0 && (
-              <div className="flex items-center justify-between rounded-[18px] px-5 py-4" style={{ background: "rgba(0,168,204,0.08)" }}>
-                <span className="text-[13px] font-bold" style={{ color: "#00A8CC" }}>
-                  שעות נוספות{settings.overtime_payout_month === "next" ? ` (מ${MONTH_HE[(currentMonth.getMonth() + 11) % 12]})` : ""}
-                </span>
-                <span dir="ltr" className="tabular-nums" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.01em", color: "#00A8CC" }}>
-                  +{money(projectedPayroll.overtimePay)}
-                </span>
-              </div>
-            )}
-
-            {/* When gross is base-pay-only, show the additions and the grand total they reach so
-                the numbers still visibly add up. */}
-            {!includeAdditionsInGross && additionsGrandTotal > 0 && (
-              <>
-                <div className="flex items-center justify-between rounded-[18px] px-5 py-4" style={{ background: "rgba(15,118,110,0.07)" }}>
-                  <span className="text-[13px] font-bold" style={{ color: "#0F766E" }}>תוספות (נסיעות וכו׳)</span>
-                  <span dir="ltr" className="tabular-nums" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.01em", color: "#0F766E" }}>
-                    +{money(additionsGrandTotal)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between rounded-[18px] px-5 py-4" style={{ background: `${LH.primary}0F` }}>
-                  <span className="text-[13px] font-bold" style={{ color: LH.onSurface }}>סה״כ כולל תוספות</span>
-                  <span dir="ltr" className="tabular-nums" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.01em", color: LH.onSurface }}>
-                    {money(forecastGrossTotal)}
-                  </span>
-                </div>
-              </>
-            )}
-          </div>
-
-          {settings.overtime_payout_month === "next" && payroll.ownOvertimeHours > 0 && (
-            <div className="flex items-center gap-2 rounded-2xl px-4 py-3 mt-3">
-              <span className="material-symbols-outlined text-[16px] shrink-0" style={{ color: "#00A8CC" }}>sync_alt</span>
-              <span className="text-[11.5px] font-semibold" style={{ color: "#00A8CC" }}>
-                {formatHM(payroll.ownOvertimeHours)} שעות נוספות שנצברו החודש לא כלולות כאן — יופיעו בתלוש {MONTH_HE[(currentMonth.getMonth() + 1) % 12]}
-              </span>
-            </div>
-          )}
-
-          {isCurrentMonth && (
-            <div className="flex items-center gap-1.5 px-1 mt-3">
-              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "#19CEA0" }} />
-              <span className="text-[11px] font-medium" style={{ color: LH.onSurfaceVariant }}>
-                תחזית מלאה — כולל ימים שטרם הגיעו, לפי לוח העבודה שלך
-              </span>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Current net pay — deductions/additions prorated to date, not projected to month-end */}
-      <Dialog open={currentNetOpen} onOpenChange={setCurrentNetOpen}>
-        <DialogContent className="max-w-md rounded-[28px] p-6" style={{ background: LH.background }} dir="rtl">
-          <DialogHeader>
-            <div className="flex items-center gap-2.5 justify-end">
-              <DialogTitle style={{ color: LH.onSurface }}>שכר נטו נוכחי</DialogTitle>
-              <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(15,118,110,0.08)" }}>
-                <span className="material-symbols-outlined text-[18px]" style={{ color: "#0F766E" }}>account_balance_wallet</span>
-              </div>
-            </div>
-          </DialogHeader>
-
-          <div className="flex flex-col gap-3 mt-2">
-            <div className="rounded-[22px] p-5" style={{ background: "#0F766E" }}>
-              <span className="text-[11px] font-bold tracking-[0.1em] uppercase block mb-1" style={{ color: "rgba(255,255,255,0.65)" }}>{actualSaved && hasActualNet ? "נטו בפועל (מאושר)" : "נטו נכון להיום"}</span>
-              <span dir="ltr" className="block tabular-nums leading-none" style={{ fontFamily: "'Bricolage Grotesque', 'Heebo', system-ui, sans-serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.02em", color: "#fff" }}>
-                {money(actualSaved && hasActualNet ? actualNetValue : currentToDatePayroll.netPay)}
-              </span>
-            </div>
-
-            {/* Additions — itemized, so it's clear exactly what's built the net-to-date figure */}
-            <div className="flex flex-col gap-2">
-              <span className="text-[10.5px] font-bold uppercase tracking-[0.08em] px-1" style={{ color: "#0F766E" }}>תוספות</span>
-              {[
-                { label: "שעות רגילות", amount: currentToDatePayroll.regularPay },
-                ...(currentToDatePayroll.overtimePay > 0 ? [{ label: "שעות נוספות", amount: currentToDatePayroll.overtimePay }] : []),
-                ...(currentToDatePayroll.fixedComponentsTotal > 0 ? [{ label: "תוספות קבועות (יחסי לימים שעברו)", amount: currentToDatePayroll.fixedComponentsTotal }] : []),
-                ...(currentToDatePayroll.foodAllowanceAddition > 0 ? [{ label: "תקציב אוכל (יחסי לימים שעברו)", amount: currentToDatePayroll.foodAllowanceAddition }] : []),
-              ].map((item) => (
-                <div key={item.label} className="flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: "rgba(15,118,110,0.06)" }}>
-                  <span className="text-[12.5px] font-semibold" style={{ color: LH.onSurface }}>{item.label}</span>
-                  <span dir="ltr" className="tabular-nums text-[14px] font-bold" style={{ fontFamily: "'Space Grotesk', sans-serif", color: "#0F766E" }}>+{money(item.amount)}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* Deductions — itemized by statutory category + manual + food expenses */}
-            <div className="flex flex-col gap-2 mt-1">
-              <span className="text-[10.5px] font-bold uppercase tracking-[0.08em] px-1" style={{ color: "#DC2626" }}>ניכויים</span>
-              {[
-                { label: "מס הכנסה", amount: currentToDatePayroll.statutory.incomeTax },
-                { label: "ביטוח לאומי", amount: currentToDatePayroll.statutory.nationalInsurance },
-                { label: "ביטוח בריאות", amount: currentToDatePayroll.statutory.healthInsurance },
-                { label: "פנסיה", amount: currentToDatePayroll.statutory.pensionEmployee },
-                { label: "קרן השתלמות", amount: currentToDatePayroll.statutory.trainingFundEmployee },
-                { label: "ניכויים ידניים (יחסי לימים שעברו)", amount: currentToDatePayroll.deductionsTotal },
-                { label: "הוצאות אוכל שדווחו", amount: currentToDatePayroll.foodExpenseDeduction },
-              ]
-                .filter((item) => item.amount > 0)
-                .map((item) => (
-                  <div key={item.label} className="flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: "rgba(220,38,38,0.06)" }}>
-                    <span className="text-[12.5px] font-semibold" style={{ color: LH.onSurface }}>{item.label}</span>
-                    <span dir="ltr" className="tabular-nums text-[14px] font-bold" style={{ fontFamily: "'Space Grotesk', sans-serif", color: "#DC2626" }}>−{money(item.amount)}</span>
-                  </div>
-                ))}
-              {currentToDatePayroll.statutory.totalStatutoryDeductions + currentToDatePayroll.deductionsTotal + currentToDatePayroll.foodExpenseDeduction === 0 && (
-                <span className="text-[12px] px-1" style={{ color: LH.onSurfaceVariant }}>אין ניכויים עד כה.</span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1.5 px-1 mt-3">
-            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "#0F766E" }} />
-            <span className="text-[11px] font-medium" style={{ color: LH.onSurfaceVariant }}>
-              מבוסס על השעות שכבר עבדת, ותוספות/ניכויים קבועים יחסית לימי העבודה שכבר עברו החודש — לא תחזית לסוף החודש.
-            </span>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Full manual payroll editor — every correctable field + one-off extras for this month */}
-      <Dialog open={fullEditorOpen} onOpenChange={setFullEditorOpen}>
-        <DialogContent className="max-w-md rounded-[28px] p-6" style={{ background: LH.background, maxHeight: "85vh", overflowY: "auto" }} dir="rtl">
-          <DialogHeader>
-            <DialogTitle style={{ color: LH.onSurface }}>עריכת כל פרטי השכר</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-4 mt-1">
-            <div className="flex flex-col gap-3">
-              {CORRECTABLE_PAYROLL_FIELDS.map((f) => (
-                <div key={f.id}>
-                  <label className="text-[11.5px] font-bold block mb-1" style={{ color: LH.onSurfaceVariant }}>
-                    {f.label} {f.kind === "rate" ? "(%)" : f.kind === "points" ? "(נקודות)" : "(₪)"}
-                  </label>
-                  <input
-                    type="number"
-                    value={fieldDrafts[f.id] ?? ""}
-                    onChange={(e) => setFieldDrafts((prev) => ({ ...prev, [f.id]: e.target.value }))}
-                    className="w-full h-11 rounded-2xl px-4 text-[15px] font-bold"
-                    style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
-                  />
-                </div>
-              ))}
-            </div>
-
-            <div className="pt-2 flex flex-col gap-2" style={{ borderTop: "1px solid rgba(35,50,100,0.08)" }}>
-              <span className="text-[11.5px] font-bold" style={{ color: "#0F766E" }}>תוספות חד-פעמיות לחודש זה</span>
-              {extraAdditionsDraft.map((item, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={item.label}
-                    onChange={(e) => setExtraAdditionsDraft((prev) => prev.map((p, idx) => (idx === i ? { ...p, label: e.target.value } : p)))}
-                    placeholder="תיאור"
-                    className="flex-1 h-10 rounded-xl px-3 text-[13px]"
-                    style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
-                  />
-                  <input
-                    type="number"
-                    value={item.amount || ""}
-                    onChange={(e) => setExtraAdditionsDraft((prev) => prev.map((p, idx) => (idx === i ? { ...p, amount: parseFloat(e.target.value) || 0 } : p)))}
-                    placeholder="₪"
-                    className="w-20 h-10 rounded-xl px-2 text-[13px] font-bold text-center"
-                    style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
-                  />
-                  <button onClick={() => setExtraAdditionsDraft((prev) => prev.filter((_, idx) => idx !== i))} className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(220,38,38,0.08)", color: "#DC2626" }}>
-                    <span className="material-symbols-outlined text-[15px]">close</span>
-                  </button>
-                </div>
-              ))}
-              <button
-                onClick={() => setExtraAdditionsDraft((prev) => [...prev, { label: "", amount: 0 }])}
-                className="text-[12px] font-bold self-start"
-                style={{ color: "#0F766E" }}
-              >
-                + הוספת תוספת
-              </button>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <span className="text-[11.5px] font-bold" style={{ color: "#DC2626" }}>ניכויים חד-פעמיים לחודש זה</span>
-              {extraDeductionsDraft.map((item, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={item.label}
-                    onChange={(e) => setExtraDeductionsDraft((prev) => prev.map((p, idx) => (idx === i ? { ...p, label: e.target.value } : p)))}
-                    placeholder="תיאור"
-                    className="flex-1 h-10 rounded-xl px-3 text-[13px]"
-                    style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
-                  />
-                  <input
-                    type="number"
-                    value={item.amount || ""}
-                    onChange={(e) => setExtraDeductionsDraft((prev) => prev.map((p, idx) => (idx === i ? { ...p, amount: parseFloat(e.target.value) || 0 } : p)))}
-                    placeholder="₪"
-                    className="w-20 h-10 rounded-xl px-2 text-[13px] font-bold text-center"
-                    style={{ background: "#fff", border: "1px solid #e4e1e6", color: LH.onSurface }}
-                  />
-                  <button onClick={() => setExtraDeductionsDraft((prev) => prev.filter((_, idx) => idx !== i))} className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(220,38,38,0.08)", color: "#DC2626" }}>
-                    <span className="material-symbols-outlined text-[15px]">close</span>
-                  </button>
-                </div>
-              ))}
-              <button
-                onClick={() => setExtraDeductionsDraft((prev) => [...prev, { label: "", amount: 0 }])}
-                className="text-[12px] font-bold self-start"
-                style={{ color: "#DC2626" }}
-              >
-                + הוספת ניכוי
-              </button>
-            </div>
-
-            <p className="text-[10.5px]" style={{ color: LH.onSurfaceVariant }}>
-              התוספות/ניכויים החד-פעמיים תמיד שייכים רק לחודש הזה. שדות המס/ביטוח למעלה אפשר לשמור רק לחודש הזה, או לכל המשכורות הבאות.
-            </p>
-
-            <div className="flex gap-2">
-              <button onClick={saveFullEditorThisMonth} className="flex-1 h-11 rounded-2xl font-bold text-[12.5px]" style={{ background: "rgba(35,50,100,0.06)", color: LH.onSurface }}>
-                שמירה לחודש זה בלבד
-              </button>
-              <button onClick={saveFullEditorAllFutureMonths} className="flex-1 h-11 rounded-2xl font-bold text-white text-[12.5px]" style={{ background: "#0F766E" }}>
-                שמירת שדות המס מכאן ואילך
-              </button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
