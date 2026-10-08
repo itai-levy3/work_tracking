@@ -1412,7 +1412,17 @@ export const computeMonthlyPayroll = (year: number, month: number, settings: Use
  */
 export const computeCurrentMonthToDatePayroll = (year: number, month: number, settings: UserSettings): MonthlyPayroll => {
   const raw = computeRawMonthPay(year, month, settings);
-  const { regularHours, overtimeHours, regularPay, overtimePay, daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay } = raw;
+  const { regularHours, regularPay, daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay } = raw;
+  // Same overtime-payout rule as the full-month payroll: with a month-behind payout, the overtime that
+  // counts toward THIS month is last month's, not what is being worked right now.
+  let overtimeHours = raw.overtimeHours;
+  let overtimePay = raw.overtimePay;
+  if (settings.overtime_payout_month === "next") {
+    const prev = new Date(year, month - 1, 1);
+    const prevRaw = computeRawMonthPay(prev.getFullYear(), prev.getMonth(), settings);
+    overtimeHours = prevRaw.overtimeHours;
+    overtimePay = prevRaw.overtimePay;
+  }
 
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const today = new Date();
