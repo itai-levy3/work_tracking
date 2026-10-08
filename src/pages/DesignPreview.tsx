@@ -26,6 +26,7 @@ import {
   WorkHour,
 } from "@/lib/localData";
 import { CholHamoedModal } from "./design-preview/CholHamoedModal";
+import { buildDayMessage, isFinishedDay } from "@/lib/dayMessages";
 import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LHBottomNav, LHLoadingScreen } from "./design-preview/Shared";
@@ -500,6 +501,10 @@ export default function DesignPreview() {
     return hours * computeEffectiveHourlyRateForMonth(d.getFullYear(), d.getMonth(), settings);
   };
   const moneyHe = (n: number) => `₪${Math.round(n).toLocaleString("he-IL")}`;
+
+  // The most recent finished day, in plain words (same messages as the daily feed in Reports).
+  const latestFinished = [...workHours].filter((w) => isFinishedDay(w, todayStr)).sort((a, b) => b.date.localeCompare(a.date))[0];
+  const latestMsg = latestFinished ? buildDayMessage(latestFinished, settings) : null;
 
   // Sorted newest-first. `workHours` is already scoped to the viewed month, so switching months
   // naturally shows only that month's records.
@@ -1152,6 +1157,27 @@ export default function DesignPreview() {
                   </p>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* The latest finished day's message — what that day earned, in plain words */}
+          {latestFinished && latestMsg && latestMsg.lines.length > 0 && (
+            <div
+              className="lh-rise rounded-[26px] p-5 flex items-center gap-4 relative overflow-hidden"
+              style={{ animationDelay: "300ms", background: "#fff", boxShadow: "0 12px 34px -14px rgba(35,50,100,0.2)", borderInlineStart: `4px solid ${latestMsg.isMixed ? "#7639FF" : STATUS_META[latestMsg.category].grad[0]}` }}
+            >
+              <div className="flex flex-col items-center shrink-0" style={{ width: 46 }}>
+                <span className="text-[22px] font-extrabold leading-none tabular-nums" style={{ color: "#101A46" }}>{new Date(`${latestFinished.date}T00:00:00`).getDate()}</span>
+                <span className="text-[10.5px] font-bold mt-1" style={{ color: "#8892b0" }}>{latestFinished.date === todayStr ? "היום" : MONTH_HE[new Date(`${latestFinished.date}T00:00:00`).getMonth()]}</span>
+              </div>
+              <div className="flex-1 min-w-0 flex flex-col gap-1">
+                {latestMsg.lines.map((l) => (
+                  <span key={l} className="text-[13px] font-semibold leading-snug" style={{ color: "#101A46" }}>{l}</span>
+                ))}
+              </div>
+              <span dir="ltr" className="tabular-nums text-[16px] font-bold shrink-0" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: latestMsg.pay > 0.5 ? "#0F766E" : "#8892b0" }}>
+                +₪{Math.round(latestMsg.pay).toLocaleString("he-IL")}
+              </span>
             </div>
           )}
 
