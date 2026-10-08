@@ -84,6 +84,8 @@ export default function DesignPreviewReports() {
   // Month-end correction panel: the system's mandatory-deduction / pension totals can be overwritten
   // from the payslip, and the final net follows.
   const [editOpen, setEditOpen] = useState(false);
+  const [edGross, setEdGross] = useState("");
+  const [edOvertime, setEdOvertime] = useState("");
   const [edMandatory, setEdMandatory] = useState("");
   const [edProvident, setEdProvident] = useState("");
   const [edNet, setEdNet] = useState("");
@@ -154,24 +156,8 @@ export default function DesignPreviewReports() {
 
   if (loading || !settings || !payroll || !projected || !toDate) return <LHLoadingScreen />;
 
-  const forecastGross = grossOf(projected);
-  const accruedGross = isCurrentMonth ? grossOf(toDate) : grossOf(payroll);
-  const progress = isCurrentMonth ? (forecastGross > 0 ? Math.min(100, (accruedGross / forecastGross) * 100) : 0) : 100;
-  const netToDate = isCurrentMonth ? toDate.netPay : payroll.netPay;
-  const netForecast = isCurrentMonth ? projected.netPay : payroll.netPay;
-  const hasActual = !!savedActual;
-  const actualValue = parseFloat(actualInput);
-  const canSaveActual = actualInput.trim() !== "" && !Number.isNaN(actualValue) && actualValue >= 0;
-  const payoutNext = settings.overtime_payout_month === "next";
-  // The gross composition follows the month day by day (what has accrued so far), not the month-end forecast.
-  const breakdownSource = isCurrentMonth ? toDate : payroll;
-  const breakdown = [
-    { label: "שעות רגילות", amount: breakdownSource.regularPay, color: "#7639FF" },
-    { label: payoutNext ? "שעות נוספות מחודש קודם" : "שעות נוספות", amount: breakdownSource.overtimePay, color: "#00A8CC" },
-    { label: "תוספות קבועות", amount: breakdownSource.fixedComponentsTotal, color: "#0F766E" },
-    { label: "תקציב אוכל", amount: breakdownSource.foodAllowanceAddition, color: "#F59E0B" },
-  ].filter((r, i) => i < 2 || r.amount > 0.5);
-  const breakdownTotal = breakdown.reduce((s, r) => s + r.amount, 0) || 1;
+  // ---- Unpaid vacation/sick days: the one thing that cuts pay itself. Shown as its own line in BOTH the
+  // gross and the net composition, on top of the pay "as if" those days had been paid. ----
   const vacationDeductions = deductions.filter((d) => d.type === "vacation");
   const sickDeductions = deductions.filter((d) => d.type === "sick");
   const vacationTotal = vacationDeductions.reduce((s, d) => s + d.amount, 0);
@@ -179,7 +165,8 @@ export default function DesignPreviewReports() {
   const totalDeducted = vacationTotal + sickTotal;
   const totalHours = payroll.regularHours + payroll.overtimeHours;
 
-  // ---- Month-final net, composed: gross (incl. overtime) − mandatory − pension/provident − other ----
+  // ---- Month-final figures. Gross and overtime (and the two deduction totals) can be corrected from the
+  // payslip after the month closes; everything below reads the corrected value when there is one. ----
   const st = payroll.statutory;
   const mandatoryComputed = st.incomeTax + st.nationalInsurance + st.healthInsurance;
   const providentComputed = st.pensionEmployee + st.trainingFundEmployee;
@@ -187,11 +174,38 @@ export default function DesignPreviewReports() {
   const overrides = savedActual?.fieldOverrides as Record<string, number | undefined> | undefined;
   const mandatoryShown = overrides?.__mandatory ?? mandatoryComputed;
   const providentShown = overrides?.__provident ?? providentComputed;
-  const grossFull = grossOf(payroll);
-  const baseGrossFull = grossFull - payroll.overtimePay;
+  const grossSystem = grossOf(payroll);
+  const baseGrossSystem = grossSystem - payroll.overtimePay;
+  const baseGrossShown = overrides?.__gross ?? baseGrossSystem;
+  const overtimeShown = overrides?.__overtime ?? payroll.overtimePay;
+  const grossShown = baseGrossShown + overtimeShown;
+  const manualAdjust = grossShown - grossSystem;
   const mandatoryParts = [st.incomeTax > 0 && "מס הכנסה", st.nationalInsurance > 0 && "ביטוח לאומי", st.healthInsurance > 0 && "ביטוח בריאות"].filter(Boolean).join(" · ");
   const providentParts = [st.pensionEmployee > 0 && "פנסיה", st.trainingFundEmployee > 0 && "קרן השתלמות"].filter(Boolean).join(" · ");
+
+  const forecastGross = grossOf(projected);
+  const accruedGross = isFinal ? grossShown : isCurrentMonth ? grossOf(toDate) : grossSystem;
+  const progress = isCurrentMonth && !isFinal ? (forecastGross > 0 ? Math.min(100, (accruedGross / forecastGross) * 100) : 0) : 100;
+  const netToDate = isCurrentMonth ? toDate.netPay : payroll.netPay;
+  const netForecast = isCurrentMonth ? projected.netPay : payroll.netPay;
+  const hasActual = !!savedActual;
+  const actualValue = parseFloat(actualInput);
+  const canSaveActual = actualInput.trim() !== "" && !Number.isNaN(actualValue) && actualValue >= 0;
+  const payoutNext = settings.overtime_payout_month === "next";
   const finalNet = hasActual ? savedActual!.actualNet : payroll.netPay;
+
+  // Gross composition — follows the month day by day (accrued to date), full month once it's final.
+  const breakdownSource = isCurrentMonth ? toDate : payroll;
+  const breakdown: { label: string; amount: number; color: string }[] = [
+    { label: "שעות רגילות", amount: breakdownSource.regularPay + totalDeducted, color: "#7639FF" },
+    ...(totalDeducted > 0.5 ? [{ label: "קיזוז ימים ללא תשלום", amount: -totalDeducted, color: "#DC2626" }] : []),
+    { label: payoutNext ? "שעות נוספות מחודש קודם" : "שעות נוספות", amount: breakdownSource.overtimePay, color: "#00A8CC" },
+    ...(breakdownSource.fixedComponentsTotal > 0.5 ? [{ label: "תוספות קבועות", amount: breakdownSource.fixedComponentsTotal, color: "#0F766E" }] : []),
+    ...(breakdownSource.foodAllowanceAddition > 0.5 ? [{ label: "תקציב אוכל", amount: breakdownSource.foodAllowanceAddition, color: "#F59E0B" }] : []),
+    ...(isFinal && Math.abs(manualAdjust) > 0.5 ? [{ label: "תיקון ידני", amount: manualAdjust, color: "#8892b0" }] : []),
+  ];
+  const breakdownTotal = breakdown.reduce((s, r) => s + r.amount, 0);
+  const breakdownPositive = breakdown.filter((r) => r.amount > 0).reduce((s, r) => s + r.amount, 0) || 1;
 
   const saveActual = () => {
     if (!canSaveActual) return;
@@ -206,24 +220,38 @@ export default function DesignPreviewReports() {
   };
 
   const openEdit = () => {
+    setEdGross(String(Math.round(baseGrossShown)));
+    setEdOvertime(String(Math.round(overtimeShown)));
     setEdMandatory(String(Math.round(mandatoryShown)));
     setEdProvident(String(Math.round(providentShown)));
     setEdNet(hasActual ? String(Math.round(savedActual!.actualNet)) : "");
     setEditOpen(true);
   };
   const saveEdit = () => {
-    const m = parseFloat(edMandatory);
-    const p = parseFloat(edProvident);
-    const mm = Number.isNaN(m) ? mandatoryComputed : Math.max(0, m);
-    const pp = Number.isNaN(p) ? providentComputed : Math.max(0, p);
+    const num = (v: string, fallback: number) => {
+      const n = parseFloat(v);
+      return v.trim() === "" || Number.isNaN(n) ? fallback : Math.max(0, n);
+    };
+    const gg = num(edGross, baseGrossSystem);
+    const oo = num(edOvertime, payroll.overtimePay);
+    const mm = num(edMandatory, mandatoryComputed);
+    const pp = num(edProvident, providentComputed);
     const typedNet = parseFloat(edNet);
-    const net = edNet.trim() !== "" && !Number.isNaN(typedNet) ? typedNet : grossFull - mm - pp - otherDeductions;
+    const net = edNet.trim() !== "" && !Number.isNaN(typedNet) ? typedNet : gg + oo - mm - pp - otherDeductions;
+    // Only values that actually differ from the system's own are stored as corrections.
+    const diff = (v: number, sys: number) => Math.abs(v - sys) >= 0.5;
+    const kept: Record<string, number | undefined> = { ...(savedActual?.fieldOverrides || {}) };
+    for (const k of ["__gross", "__overtime", "__mandatory", "__provident"]) delete kept[k];
+    if (diff(gg, baseGrossSystem)) kept.__gross = gg;
+    if (diff(oo, payroll.overtimePay)) kept.__overtime = oo;
+    if (diff(mm, mandatoryComputed)) kept.__mandatory = mm;
+    if (diff(pp, providentComputed)) kept.__provident = pp;
     savePayrollActual({
       year,
       month,
       actualNet: net,
       estimatedNet: payroll.netPay,
-      fieldOverrides: { ...(savedActual?.fieldOverrides || {}), __mandatory: mm, __provident: pp },
+      fieldOverrides: kept,
       extraAdditions: savedActual?.extraAdditions,
       extraDeductions: savedActual?.extraDeductions,
     });
@@ -403,6 +431,8 @@ export default function DesignPreviewReports() {
                         הנתונים של המערכת לא מדויקים? הזן מה שמופיע בתלוש. הנטו יחושב מחדש, או הזן אותו ישירות.
                       </span>
                       {[
+                        { label: "ברוטו (ללא שעות נוספות)", value: edGross, set: setEdGross },
+                        { label: "שעות נוספות (₪)", value: edOvertime, set: setEdOvertime },
                         { label: "ניכויי חובה (סה״כ)", value: edMandatory, set: setEdMandatory },
                         { label: "קופות גמל ופנסיה (סה״כ)", value: edProvident, set: setEdProvident },
                         { label: "נטו בפועל (לא חובה)", value: edNet, set: setEdNet },
@@ -502,13 +532,13 @@ export default function DesignPreviewReports() {
                 ממה מורכב הברוטו{isCurrentMonth ? " · עד היום" : ""}
               </span>
             </div>
-            {breakdown.every((r) => r.amount <= 0.5) ? (
+            {breakdown.every((r) => Math.abs(r.amount) <= 0.5) ? (
               <span className="text-[12.5px]" style={{ color: LH.onSurfaceVariant }}>עדיין לא נצבר שכר החודש.</span>
             ) : (
               <>
                 <div className="flex h-2.5 rounded-full overflow-hidden mb-4" style={{ background: "rgba(35,50,100,0.07)" }}>
-                  {breakdown.map((r) => (
-                    <div key={r.label} style={{ width: `${(r.amount / breakdownTotal) * 100}%`, background: r.color }} />
+                  {breakdown.filter((r) => r.amount > 0).map((r) => (
+                    <div key={r.label} style={{ width: `${(r.amount / breakdownPositive) * 100}%`, background: r.color }} />
                   ))}
                 </div>
                 <div className="flex flex-col gap-3">
@@ -516,9 +546,11 @@ export default function DesignPreviewReports() {
                     <div key={r.label} className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full" style={{ background: r.color }} />
-                        <span className="text-[13px] font-semibold" style={{ color: LH.onSurface }}>{r.label}</span>
+                        <span className="text-[13px] font-semibold" style={{ color: r.amount < 0 ? "#DC2626" : LH.onSurface }}>{r.label}</span>
                       </div>
-                      <span dir="ltr" className="tabular-nums text-[15px] font-bold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: LH.onSurface }}>+{money(r.amount)}</span>
+                      <span dir="ltr" className="tabular-nums text-[15px] font-bold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: r.amount < 0 ? "#DC2626" : LH.onSurface }}>
+                        {r.amount < 0 ? "−" : "+"}{money(Math.abs(r.amount))}
+                      </span>
                     </div>
                   ))}
                   <div className="flex items-center justify-between pt-3" style={{ borderTop: `1px solid ${LH.surfaceVariant}` }}>
@@ -533,38 +565,39 @@ export default function DesignPreviewReports() {
           {/* Overtime, in its own rubric: last month's overtime that lands in THIS month's gross, and what
               has been worked this month (which is paid next month when the payout is a month behind). */}
           <div className={`lh-rise z-10 grid gap-3 ${payoutNext ? "grid-cols-2" : "grid-cols-1"}`} style={{ animationDelay: "130ms" }}>
-            {payoutNext && (
-              <div className="rounded-[26px] p-5 relative overflow-hidden" style={{ background: "linear-gradient(160deg,#0B3B5C,#0A7EA4 70%,#19CEA0)", boxShadow: "0 20px 44px -16px rgba(10,126,164,0.55)" }}>
-                <div className="absolute -right-8 -top-8 w-28 h-28 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(255,255,255,0.3), transparent 70%)" }} />
-                <div className="relative z-10 flex flex-col h-full">
-                  <div className="flex items-center gap-1.5 mb-3">
-                    <span className="material-symbols-outlined text-[18px]" style={{ color: "#BFF3FF" }}>history</span>
-                    <span className="text-[10.5px] font-extrabold tracking-[0.1em] uppercase" style={{ color: "rgba(255,255,255,0.85)" }}>שעות נוספות מחודש קודם</span>
+            {[
+              ...(payoutNext
+                ? [{ key: "prev", icon: "history", title: "שעות נוספות מחודש קודם", hours: payroll.overtimeHours, pay: payroll.overtimePay, note: "נכנסו לברוטו של החודש", accent: "#0E7490", tint: "#ECF7F9", line: "#CBE8EE" }]
+                : []),
+              {
+                key: "own",
+                icon: "more_time",
+                title: payoutNext ? "נצברו החודש" : "שעות נוספות החודש",
+                hours: payroll.ownOvertimeHours,
+                pay: payroll.ownOvertimePay,
+                note: payoutNext ? "ישולמו בחודש הבא" : "כלולות בברוטו של החודש",
+                accent: "#6D5BD0",
+                tint: "#F3F1FC",
+                line: "#DDD8F4",
+              },
+            ].map((c) => (
+              <div key={c.key} className="rounded-[24px] p-4 flex flex-col" style={{ background: c.tint, border: `1px solid ${c.line}` }}>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: "#fff", boxShadow: `0 4px 10px -4px ${c.accent}55` }}>
+                    <span className="material-symbols-outlined text-[17px]" style={{ color: c.accent }}>{c.icon}</span>
                   </div>
-                  <span dir="ltr" className="tabular-nums leading-none" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 30, fontWeight: 800, color: "#fff", letterSpacing: "-0.03em" }}>
-                    {formatHM(payroll.overtimeHours)}
+                  <span className="text-[11.5px] font-bold leading-tight" style={{ color: LH.onSurface }}>{c.title}</span>
+                </div>
+                <div className="flex items-baseline gap-1.5">
+                  <span dir="ltr" className="tabular-nums leading-none" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 26, fontWeight: 700, color: LH.onSurface, letterSpacing: "-0.03em" }}>
+                    {formatHM(c.hours)}
                   </span>
-                  <span className="text-[11px] font-semibold mt-1" style={{ color: "rgba(255,255,255,0.8)" }}>שעות</span>
-                  <span dir="ltr" className="tabular-nums text-[17px] font-bold mt-3" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: "#BFF3FF" }}>+{money(payroll.overtimePay)}</span>
-                  <span className="text-[10.5px] font-medium mt-1" style={{ color: "rgba(255,255,255,0.7)" }}>נכנסו לברוטו של החודש</span>
+                  <span className="text-[11px] font-semibold" style={{ color: "#8892b0" }}>שעות</span>
                 </div>
+                <span dir="ltr" className="tabular-nums text-[15px] font-bold mt-2" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: c.accent }}>+{money(c.pay)}</span>
+                <span className="text-[10.5px] font-medium mt-1" style={{ color: "#8892b0" }}>{c.note}</span>
               </div>
-            )}
-            <div className="rounded-[26px] p-5 relative overflow-hidden" style={{ background: "linear-gradient(160deg,#2E1065,#6D28D9 65%,#A78BFA)", boxShadow: "0 20px 44px -16px rgba(109,40,217,0.5)" }}>
-              <div className="absolute -left-8 -bottom-8 w-28 h-28 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(255,255,255,0.28), transparent 70%)" }} />
-              <div className="relative z-10 flex flex-col h-full">
-                <div className="flex items-center gap-1.5 mb-3">
-                  <span className="material-symbols-outlined text-[18px]" style={{ color: "#E9DDFF" }}>more_time</span>
-                  <span className="text-[10.5px] font-extrabold tracking-[0.1em] uppercase" style={{ color: "rgba(255,255,255,0.85)" }}>{payoutNext ? "נצברו החודש" : "שעות נוספות החודש"}</span>
-                </div>
-                <span dir="ltr" className="tabular-nums leading-none" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 30, fontWeight: 800, color: "#fff", letterSpacing: "-0.03em" }}>
-                  {formatHM(payroll.ownOvertimeHours)}
-                </span>
-                <span className="text-[11px] font-semibold mt-1" style={{ color: "rgba(255,255,255,0.8)" }}>שעות</span>
-                <span dir="ltr" className="tabular-nums text-[17px] font-bold mt-3" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: "#E9DDFF" }}>+{money(payroll.ownOvertimePay)}</span>
-                <span className="text-[10.5px] font-medium mt-1" style={{ color: "rgba(255,255,255,0.7)" }}>{payoutNext ? "ישולמו בחודש הבא" : "כלולות בברוטו של החודש"}</span>
-              </div>
-            </div>
+            ))}
           </div>
 
           {/* How the final net is built — only once the month is final: gross + overtime − mandatory
@@ -576,8 +609,9 @@ export default function DesignPreviewReports() {
                 <span className="text-[13px] font-extrabold tracking-[0.1em] uppercase" style={{ color: LH.onSurfaceVariant }}>ממה מורכב הנטו</span>
               </div>
               {[
-                { label: "ברוטו", sub: "שכר, תוספות ותקציב אוכל", amount: baseGrossFull, sign: "+", color: LH.onSurface },
-                { label: "שעות נוספות", sub: payoutNext ? "מהחודש הקודם" : "מהחודש הזה", amount: payroll.overtimePay, sign: "+", color: "#00A8CC" },
+                { label: "ברוטו", sub: "שכר מלא לפי הלוח, תוספות ותקציב אוכל", amount: baseGrossShown + totalDeducted, sign: "+", color: LH.onSurface },
+                ...(totalDeducted > 0.5 ? [{ label: "קיזוז ימים ללא תשלום", sub: "חופש/מחלה שלא כוסו מהיתרה", amount: totalDeducted, sign: "−", color: "#DC2626" }] : []),
+                { label: "שעות נוספות", sub: payoutNext ? "מהחודש הקודם" : "מהחודש הזה", amount: overtimeShown, sign: "+", color: "#00A8CC" },
                 { label: "ניכויי חובה", sub: mandatoryParts || "—", amount: mandatoryShown, sign: "−", color: "#DC2626" },
                 { label: "קופות גמל ופנסיה", sub: providentParts || "לא מוגדר", amount: providentShown, sign: "−", color: "#DC2626" },
                 ...(otherDeductions > 0.5 ? [{ label: "ניכויים נוספים", sub: "לפי ההגדרות שלך", amount: otherDeductions, sign: "−", color: "#DC2626" }] : []),
