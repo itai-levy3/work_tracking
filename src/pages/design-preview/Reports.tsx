@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { isFullyAuthenticated, isLocalAuthenticated } from "@/lib/localAuth";
 import {
+  applyPayrollExtras,
+  applyPayrollFieldOverrides,
   computeCurrentMonthToDatePayroll,
   computeMonthlyPayroll,
   computeProjectedMonthlyPayroll,
@@ -111,14 +113,17 @@ export default function DesignPreviewReports() {
   // Net is always an estimate: if no manual tax amounts were ever entered, income tax / National
   // Insurance / health insurance are computed automatically from the official brackets (pension and
   // training fund still follow their own switches). Gross figures don't depend on this at all.
+  // Corrections the user already saved for this month (tax fields, one-off additions) are kept.
   const estSettings = useMemo(() => {
     if (!settings) return null;
-    const noManualTax = !(settings.manual_income_tax || 0) && !(settings.manual_national_insurance || 0) && !(settings.manual_health_insurance || 0);
-    return settings.statutory_deduction_mode === "automatic" || !noManualTax ? settings : { ...settings, statutory_deduction_mode: "automatic" as const };
-  }, [settings]);
-  const payroll = useMemo(() => (estSettings ? computeMonthlyPayroll(year, month, estSettings) : null), [estSettings, year, month]);
-  const projected = useMemo(() => (estSettings ? computeProjectedMonthlyPayroll(year, month, estSettings) : null), [estSettings, year, month]);
-  const toDate = useMemo(() => (estSettings ? computeCurrentMonthToDatePayroll(year, month, estSettings) : null), [estSettings, year, month]);
+    const base = applyPayrollFieldOverrides(settings, savedActual?.fieldOverrides);
+    const noManualTax = !(base.manual_income_tax || 0) && !(base.manual_national_insurance || 0) && !(base.manual_health_insurance || 0);
+    return base.statutory_deduction_mode === "automatic" || !noManualTax ? base : { ...base, statutory_deduction_mode: "automatic" as const };
+  }, [settings, savedActual]);
+  const withExtras = (p: MonthlyPayroll) => applyPayrollExtras(p, savedActual?.extraAdditions, savedActual?.extraDeductions);
+  const payroll = useMemo(() => (estSettings ? withExtras(computeMonthlyPayroll(year, month, estSettings)) : null), [estSettings, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
+  const projected = useMemo(() => (estSettings ? withExtras(computeProjectedMonthlyPayroll(year, month, estSettings)) : null), [estSettings, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
+  const toDate = useMemo(() => (estSettings ? withExtras(computeCurrentMonthToDatePayroll(year, month, estSettings)) : null), [estSettings, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
   const deductions = useMemo(() => (settings ? computeUnpaidLeaveDeductions(year, month, settings) : []), [settings, year, month]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -129,15 +134,17 @@ export default function DesignPreviewReports() {
   const todayClosed = !todayEntry || isFinishedDay(todayEntry, todayKey);
   const isFinal = isPastMonth || (isCurrentMonth && now.getDate() === lastDayOfMonth && todayClosed);
 
-  const feed = useMemo(() => {
-    if (!settings) return [];
-    const lostByDate = new Map<string, number>();
-    for (const d of deductions) lostByDate.set(d.date, (lostByDate.get(d.date) || 0) + d.amount);
-    return monthEntries
-      .filter((w) => isFinishedDay(w, todayKey))
-      .sort((a, b) => b.date.localeCompare(a.date))
-      .map((w) => ({ w, msg: buildDayMessage(w, settings), lost: lostByDate.get(w.date) || 0 }));
-  }, [settings, deductions, monthEntries, todayKey]);
+  // One friendly message for today (only while viewing the current month): today's, once it's
+  // finished — otherwise the most recent finished day, labelled with when it was.
+  const spotlight = useMemo(() => {
+    if (!settings || !isCurrentMonth) return null;
+    const finished = monthEntries.filter((w) => isFinishedDay(w, todayKey)).sort((a, b) => b.date.localeCompare(a.date));
+    const w = finished[0];
+    if (!w) return null;
+    const msg = buildDayMessage(w, settings);
+    if (msg.lines.length === 0) return null;
+    return { w, msg, isToday: w.date === todayKey };
+  }, [settings, isCurrentMonth, monthEntries, todayKey]);
 
   if (loading || !settings || !payroll || !projected || !toDate) return <LHLoadingScreen />;
 
@@ -156,7 +163,7 @@ export default function DesignPreviewReports() {
     { label: payoutNext ? "שעות נוספות מחודש קודם" : "שעות נוספות", amount: breakdownSource.overtimePay, color: "#00A8CC" },
     { label: "תוספות קבועות", amount: breakdownSource.fixedComponentsTotal, color: "#0F766E" },
     { label: "תקציב אוכל", amount: breakdownSource.foodAllowanceAddition, color: "#F59E0B" },
-  ].filter((r) => r.amount > 0.5);
+  ].filter((r, i) => i < 2 || r.amount > 0.5);
   const breakdownTotal = breakdown.reduce((s, r) => s + r.amount, 0) || 1;
   const vacationDeductions = deductions.filter((d) => d.type === "vacation");
   const sickDeductions = deductions.filter((d) => d.type === "sick");
@@ -231,6 +238,27 @@ export default function DesignPreviewReports() {
             </button>
           </div>
 
+          {/* Today's message — a single friendly line about the latest finished day (older days show
+              theirs when opened from the attendance card) */}
+          {spotlight && (
+            <div
+              className="lh-rise z-10 rounded-[24px] px-5 py-4 flex items-center gap-3"
+              style={{ background: "#fff", boxShadow: "0 12px 30px -14px rgba(35,50,100,0.25)", borderInlineStart: `4px solid ${spotlight.msg.isMixed ? "#7639FF" : STATUS_META[spotlight.msg.category].grad[0]}` }}
+            >
+              <div className="flex-1 min-w-0 flex flex-col gap-1">
+                <span className="text-[10.5px] font-extrabold tracking-[0.1em] uppercase" style={{ color: LH.onSurfaceVariant }}>
+                  {spotlight.isToday ? "היום" : new Date(`${spotlight.w.date}T00:00:00`).toLocaleDateString("he-IL", { weekday: "long", day: "numeric", month: "long" })}
+                </span>
+                {spotlight.msg.lines.map((l) => (
+                  <span key={l} className="text-[13.5px] font-semibold leading-snug" style={{ color: LH.onSurface }}>{l}</span>
+                ))}
+              </div>
+              <span dir="ltr" className="tabular-nums text-[16px] font-bold shrink-0" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: spotlight.msg.pay > 0.5 ? "#0F766E" : LH.onSurfaceVariant }}>
+                +{money(spotlight.msg.pay)}
+              </span>
+            </div>
+          )}
+
           {/* Hero — gross accrued so far, on a tick gauge toward the month-end estimate */}
           <div
             className="lh-rise rounded-[34px] px-6 pt-7 pb-6 relative overflow-hidden z-10"
@@ -239,9 +267,16 @@ export default function DesignPreviewReports() {
             <div className="absolute -right-12 -top-12 w-52 h-52 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(118,57,255,0.5), transparent 70%)" }} />
             <div className="absolute -left-16 bottom-0 w-56 h-56 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(0,210,255,0.28), transparent 70%)" }} />
             <div className="relative z-10 flex flex-col items-center">
-              <span className="text-[11px] font-bold tracking-[0.16em] uppercase" style={{ color: "rgba(255,255,255,0.65)" }}>
-                {isCurrentMonth ? "צבור עד היום · ברוטו" : "סה״כ ברוטו לחודש"}
-              </span>
+              {isFinal ? (
+                <span className="flex items-center gap-1.5 px-3.5 py-1 rounded-full text-[11px] font-extrabold tracking-[0.14em] uppercase" style={{ background: "rgba(25,206,160,0.18)", color: "#7FF0D0", border: "1px solid rgba(25,206,160,0.45)" }}>
+                  <span className="material-symbols-outlined text-[15px]">verified</span>
+                  ברוטו סופי
+                </span>
+              ) : (
+                <span className="text-[11px] font-bold tracking-[0.16em] uppercase" style={{ color: "rgba(255,255,255,0.65)" }}>
+                  {isCurrentMonth ? "צבור עד היום · ברוטו" : "סה״כ ברוטו לחודש"}
+                </span>
+              )}
               <div className="relative w-full flex flex-col items-center mt-1">
                 <TickGauge pct={progress} />
                 <div className="absolute bottom-0 flex flex-col items-center">
@@ -269,7 +304,65 @@ export default function DesignPreviewReports() {
             </div>
           </div>
 
-          {/* Net estimates — tax, National Insurance, health, pension and training fund applied to the gross above */}
+          {/* FINAL net — only once the month is over, or on its last day after the final clock-out. One
+              highlighted figure that already includes everything withheld (unpaid vacation/sick days,
+              income tax, National Insurance, pension, training fund); editable to the real salary. */}
+          {isFinal && (
+            <div
+              className="lh-rise z-10 rounded-[30px] p-6 relative overflow-hidden"
+              style={{ background: "linear-gradient(160deg,#064E3B,#0F766E 55%,#19CEA0)", boxShadow: "0 26px 56px -18px rgba(15,118,110,0.6)" }}
+            >
+              <div className="absolute -left-10 -top-10 w-44 h-44 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(255,255,255,0.28), transparent 70%)" }} />
+              <div className="relative z-10">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-extrabold tracking-[0.14em] uppercase" style={{ color: "rgba(255,255,255,0.85)" }}>
+                    {hasActual ? "נטו בפועל · מאושר" : `משכורת נטו משוערת · ${MONTH_HE[month]}`}
+                  </span>
+                  <span className="material-symbols-outlined text-[20px]" style={{ color: "rgba(255,255,255,0.9)" }}>{hasActual ? "verified" : "account_balance_wallet"}</span>
+                </div>
+                <span dir="ltr" className="tabular-nums leading-none block mt-3" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 46, fontWeight: 800, color: "#fff", letterSpacing: "-0.04em" }}>
+                  {money(hasActual ? savedActual!.actualNet : netForecast)}
+                </span>
+                <div className="flex flex-wrap items-center gap-2 mt-3">
+                  {!hasActual && (
+                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-full" style={{ background: "rgba(255,255,255,0.18)", color: "#fff" }}>±{money(NET_MARGIN)} סטייה</span>
+                  )}
+                  {hasActual && (
+                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-full" style={{ background: "rgba(255,255,255,0.18)", color: "#fff" }}>
+                      ההערכה כיום: {money(netForecast)} · פער {money(Math.abs(savedActual!.actualNet - netForecast))}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11.5px] font-medium leading-snug mt-3" style={{ color: "rgba(255,255,255,0.8)" }}>
+                  כולל את הקיזוזים: ימים ללא תשלום, מס הכנסה, ביטוח לאומי, פנסיה והשתלמות. שעות נוספות כלולות לפי ההגדרה שלך.
+                </p>
+                <div className="mt-4 pt-4" style={{ borderTop: "1px solid rgba(255,255,255,0.25)" }}>
+                  <span className="text-[11px] font-bold block mb-2" style={{ color: "rgba(255,255,255,0.85)" }}>קיבלת סכום אחר? עדכן כאן — זה יתעדכן גם בדוח ה-PDF</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={actualInput}
+                      onChange={(e) => setActualInput(e.target.value)}
+                      placeholder={String(Math.round(netForecast))}
+                      className="flex-1 h-12 rounded-2xl px-4 text-[18px] font-bold min-w-0"
+                      style={{ background: "rgba(255,255,255,0.95)", border: "none", color: LH.onSurface }}
+                    />
+                    <button onClick={saveActual} disabled={!canSaveActual} className="h-12 px-5 rounded-2xl font-bold disabled:opacity-40" style={{ background: "#fff", color: "#0F766E" }}>
+                      שמירה
+                    </button>
+                  </div>
+                  {hasActual && (
+                    <button onClick={clearActual} className="mt-2.5 text-[12px] font-bold underline" style={{ color: "rgba(255,255,255,0.85)" }}>
+                      חזרה להערכת המערכת
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Net estimates while the month is still running — updated every day */}
+          {!isFinal && (
           <div className="lh-rise z-10 flex flex-col gap-3" style={{ animationDelay: "60ms" }}>
             <div className="flex items-center gap-2 px-1">
               <span className="material-symbols-outlined text-[18px]" style={{ color: "#0F766E" }}>account_balance_wallet</span>
@@ -296,8 +389,10 @@ export default function DesignPreviewReports() {
               accent="#7639FF"
             />
           </div>
+          )}
 
           {/* The real salary received — replaces the estimate and goes into the PDF report */}
+          {!isFinal && (
           <div className="lh-rise z-10 rounded-[26px] p-5" style={{ animationDelay: "90ms", background: `${LH.surface}CC`, backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.5)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)" }}>
             <div className="flex items-center gap-2 mb-3">
               <span className="material-symbols-outlined text-[18px]" style={{ color: LH.primary }}>fact_check</span>
@@ -328,6 +423,7 @@ export default function DesignPreviewReports() {
               </button>
             )}
           </div>
+          )}
 
           {/* What the gross is made of */}
           <div className="lh-rise z-10 rounded-[28px] p-6" style={{ animationDelay: "120ms", background: `${LH.surface}CC`, backdropFilter: "blur(20px)", boxShadow: "0 8px 30px rgba(35,50,100,0.04)", border: "1px solid rgba(255,255,255,0.5)" }}>
@@ -337,7 +433,7 @@ export default function DesignPreviewReports() {
                 ממה מורכב הברוטו{isCurrentMonth ? " · תחזית לסוף החודש" : ""}
               </span>
             </div>
-            {breakdown.length === 0 ? (
+            {breakdown.every((r) => r.amount <= 0.5) ? (
               <span className="text-[12.5px]" style={{ color: LH.onSurfaceVariant }}>עדיין לא נצבר שכר החודש.</span>
             ) : (
               <>
@@ -363,10 +459,14 @@ export default function DesignPreviewReports() {
                 </div>
               </>
             )}
-            {payoutNext && payroll.ownOvertimeHours > 0.01 && (
-              <p className="text-[11px] mt-4 leading-snug" style={{ color: LH.onSurfaceVariant }}>
-                החודש נצברו {formatHM(payroll.ownOvertimeHours)} שעות נוספות ({money(payroll.ownOvertimePay)}) — הן יתווספו לברוטו של החודש הבא.
-              </p>
+            {payoutNext && (
+              <div className="mt-4 flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: "rgba(0,168,204,0.07)", border: "1px dashed rgba(0,168,204,0.35)" }}>
+                <div className="flex flex-col">
+                  <span className="text-[12.5px] font-bold" style={{ color: LH.onSurface }}>שעות נוספות שנצברו החודש</span>
+                  <span className="text-[10.5px]" style={{ color: LH.onSurfaceVariant }}>{formatHM(payroll.ownOvertimeHours)} שעות · יתווספו לברוטו של החודש הבא</span>
+                </div>
+                <span dir="ltr" className="tabular-nums text-[15px] font-bold shrink-0" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: "#00A8CC" }}>{money(payroll.ownOvertimePay)}</span>
+              </div>
             )}
           </div>
 
@@ -439,55 +539,6 @@ export default function DesignPreviewReports() {
               </div>
             </div>
           )}
-
-          {/* Daily feed — one plain-language line per finished day */}
-          <div className="lh-rise relative z-10" style={{ animationDelay: "180ms" }}>
-            <div className="flex items-center gap-2 mb-3 px-1">
-              <span className="material-symbols-outlined text-[18px]" style={{ color: LH.primary }}>event_note</span>
-              <h2 className="text-[16px] font-bold" style={{ color: LH.onSurface }}>יומן שכר יומי</h2>
-            </div>
-            {feed.length === 0 ? (
-              <div className="rounded-[24px] p-5 text-[12.5px]" style={{ background: `${LH.onSurfaceVariant}0A`, color: LH.onSurfaceVariant }}>
-                עדיין אין ימים שהסתיימו החודש. כל יום שיסתיים יופיע כאן עם מה שנצבר בו.
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2.5">
-                {feed.map(({ w, msg, lost }) => {
-                  const d = new Date(`${w.date}T00:00:00`);
-                  const m = STATUS_META[msg.category];
-                  return (
-                    <div
-                      key={w.date}
-                      className="rounded-[22px] p-4 flex items-center gap-3"
-                      style={{ background: "#fff", boxShadow: "0 6px 20px -10px rgba(35,50,100,0.15)", borderInlineStart: `4px solid ${msg.isMixed ? "#7639FF" : m.grad[0]}` }}
-                    >
-                      <div className="flex flex-col items-center shrink-0" style={{ width: 44 }}>
-                        <span className="text-[20px] font-extrabold leading-none tabular-nums" style={{ color: LH.onSurface }}>{d.getDate()}</span>
-                        <span className="text-[10.5px] font-bold mt-1" style={{ color: LH.onSurfaceVariant }}>{WEEKDAY_HE[d.getDay()]}</span>
-                      </div>
-                      <div className="flex-1 min-w-0 flex flex-col gap-1">
-                        {msg.lines.length === 0 ? (
-                          <span className="text-[12.5px] font-medium" style={{ color: LH.onSurfaceVariant }}>אין שכר על היום הזה.</span>
-                        ) : (
-                          msg.lines.map((l) => (
-                            <span key={l} className="text-[12.5px] font-semibold leading-snug" style={{ color: LH.onSurface }}>{l}</span>
-                          ))
-                        )}
-                      </div>
-                      <div className="flex flex-col items-end shrink-0">
-                        <span dir="ltr" className="tabular-nums text-[15px] font-bold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: msg.pay > 0.5 ? "#0F766E" : LH.onSurfaceVariant }}>
-                          +{money(msg.pay)}
-                        </span>
-                        {lost > 0.5 && (
-                          <span dir="ltr" className="tabular-nums text-[11px] font-bold" style={{ color: "#DC2626" }}>−{money(lost)}</span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
         </div>
       </main>
       <LHBottomNav active="reports" foodEnabled={!!settings.food_card_enabled} />

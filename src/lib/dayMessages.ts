@@ -87,10 +87,14 @@ export const buildDayMessage = (w: WorkHour, settings: UserSettings): DayMessage
     else if (has("sick")) lines.push("טוב שעבדת היום, ובשאר היום — תרגישו טוב 🤒");
     else if (has("vacation")) lines.push("טוב שעבדת היום, ובשאר היום — תהיו בחופש 🌴");
   } else {
-    if (has("sick", true)) lines.push("תרגישו טוב, ופיצינו אתכם על יום המחלה על חשבון ימי המחלה 🤒");
-    if (has("sick", false)) lines.push("מקווה שתרגישו טוב, אבל המערכת לא יכולה לתת לך כסף על זה 🤒");
-    if (has("vacation", true)) lines.push("מגיע לך חופשה! 🌴");
-    if (has("vacation", false)) lines.push("תהנו בחופשה, אבל זה על חשבונך 🏖️");
+    // A day only partly covered by the balance (a paid slice and an unpaid slice of the SAME kind) is
+    // ONE message about a partial wage — never the "covered" line followed by the "not covered" line.
+    if (has("sick", true) && has("sick", false)) lines.push("מקווה שתרגישו טוב. אך נוכל לתת לך רק חלק מהשכר על היום הזה 🤒");
+    else if (has("sick", true)) lines.push("תרגישו טוב, ופיצינו אתכם על יום המחלה על חשבון ימי המחלה 🤒");
+    else if (has("sick", false)) lines.push("מקווה שתרגישו טוב, אבל המערכת לא יכולה לתת לך כסף על זה 🤒");
+    if (has("vacation", true) && has("vacation", false)) lines.push("שתהיה חופשה נעימה. אך לא נוכל לתת לך חלק מהשכר על היום הזה 🌴");
+    else if (has("vacation", true)) lines.push("מגיע לך חופשה! 🌴");
+    else if (has("vacation", false)) lines.push("תהנו בחופשה, אבל זה על חשבונך 🏖️");
     if (has("off")) lines.push("שמנו לב שאינך מקבל על זה שכר 👀");
     if (has("holiday")) lines.push("שיהיה לך חג שמח 🎉");
   }

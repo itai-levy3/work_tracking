@@ -1258,7 +1258,17 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
       // hours, just the genuinely-clocked "worked portion" of a day signed off into leave partway
       // through (always paid, regardless of whether the leave portion itself is), or 0 for a plain
       // unpaid leave/off day. The unpaid/holiday bookkeeping below is entirely separate from pay.
-      const hours = Number(w.hours_worked || 0);
+      let hours = Number(w.hours_worked || 0);
+      if (w.status === "holiday") {
+        // A holiday is always paid for its own share of the day; the rest of a partial holiday is a
+        // paid vacation remainder unless declined (remainderPaid === false). Computed here from the
+        // fractions instead of trusting a stored hours_worked, which older saves (e.g. from the day
+        // editor) could leave covering only the holiday half.
+        const holidayTarget = getEffectiveDailyTarget(w.date, w, settings);
+        const f = effectiveDayFraction(w, holidayTarget);
+        const clocked = w.start_time && w.end_time ? calcHoursBetween(w.start_time, w.end_time) : 0;
+        hours = clocked + f * holidayTarget + (w.remainderPaid === false ? 0 : (1 - f) * holidayTarget);
+      }
       if (hours > 0) {
         regularHours += hours;
         regularPay += hours * baseRate;

@@ -23,6 +23,7 @@ import {
   WorkHour,
 } from "@/lib/localData";
 import { STATUS_META } from "./tokens";
+import { buildDayMessage, isFinishedDay } from "@/lib/dayMessages";
 
 /** Statuses that behave like a non-worked day: fixed hours from the daily target, no time entry. */
 const OFF_LIKE_STATUSES: DayStatus[] = ["vacation", "sick", "holiday", "off"];
@@ -307,6 +308,8 @@ export function DayDetailModal({ date, entry, settings: settingsProp, onClose, o
     return [...map.entries()].map(([category, g]) => ({ category: category as DayStatus, ...g }));
   })();
   const mixedBaseRate = computeEffectiveHourlyRateForMonth(date.getFullYear(), date.getMonth(), settings);
+  // The plain-language message for a finished saved day — shown under the clock when it opens.
+  const dayMsg = entry && isFinishedDay(entry, dateKey(new Date())) ? buildDayMessage(entry, settings) : null;
 
   const describeShare = (hours: number, start?: string | null, end?: string | null) => {
     if (start && end) return `${start} – ${end}`;
@@ -565,7 +568,7 @@ export function DayDetailModal({ date, entry, settings: settingsProp, onClose, o
         ? merged.paid
           ? (leaveHours as number)
           : 0
-        : (merged.status === "holiday" && merged.fraction !== "full" && merged.remainderPaid === false ? fractionMultiplier(merged.fraction) : merged.paid ? fractionMultiplier(merged.fraction) : 0) * target;
+        : (merged.status === "holiday" ? (merged.remainderPaid === false ? fractionMultiplier(merged.fraction) : 1) : merged.paid ? fractionMultiplier(merged.fraction) : 0) * target;
       merged.hours_worked = workedPortionHours + leaveOwnPaidHours;
       merged.leaveHours = leaveHours;
       if (!isSplit) {
@@ -848,6 +851,13 @@ export function DayDetailModal({ date, entry, settings: settingsProp, onClose, o
                   <span className="text-[12.5px]" style={{ color: "#101A46" }}>{draft.note}</span>
                 </div>
               )}
+              {dayMsg && dayMsg.lines.length > 0 && (
+                <div className="ddm-pill-in flex flex-col items-center gap-1 px-5 py-3 rounded-[22px] w-full max-w-[330px]" style={{ background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 26px -14px rgba(16,26,70,0.4)" }}>
+                  {dayMsg.lines.map((l) => (
+                    <span key={l} className="text-[13px] font-semibold text-center leading-snug" style={{ color: "#101A46" }}>{l}</span>
+                  ))}
+                </div>
+              )}
               <div className="flex items-start gap-6 mt-1">
                 <button onClick={() => setEditing(true)} className="ddm-round-btn flex flex-col items-center gap-1.5">
                   <div className="w-14 h-14 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 10px 24px -8px rgba(118,57,255,0.5)" }}>
@@ -983,6 +993,13 @@ export function DayDetailModal({ date, entry, settings: settingsProp, onClose, o
                 )}
               </div>
 
+              {dayMsg && dayMsg.lines.length > 0 && (
+                <div className="ddm-pill-in flex flex-col items-center gap-1 px-5 py-3 rounded-[22px] w-full max-w-[330px]" style={{ background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 26px -14px rgba(16,26,70,0.4)" }}>
+                  {dayMsg.lines.map((l) => (
+                    <span key={l} className="text-[13px] font-semibold text-center leading-snug" style={{ color: "#101A46" }}>{l}</span>
+                  ))}
+                </div>
+              )}
               <div className="ddm-pill-in flex items-start gap-6 mt-1">
                 <button onClick={() => setEditing(true)} className="ddm-round-btn flex flex-col items-center gap-1.5">
                   <div className="w-14 h-14 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF)", boxShadow: "0 10px 24px -8px rgba(118,57,255,0.5)" }}>
