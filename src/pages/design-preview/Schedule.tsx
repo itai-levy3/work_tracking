@@ -145,7 +145,7 @@ export default function DesignPreviewSchedule() {
                       const m = STATUS_META[cat as DayStatus];
                       const from = acc;
                       acc += (hours / total) * 360;
-                      return `${m.grad[0]} ${from}deg ${acc}deg`;
+                      return `color-mix(in srgb, ${m.grad[1]} 32%, white) ${from}deg ${acc}deg`;
                     });
                     return `conic-gradient(from 0deg, ${stops.join(", ")})`;
                   })();
@@ -163,7 +163,7 @@ export default function DesignPreviewSchedule() {
                   return (
                     <div key={day} onClick={() => openDay(day)} className="h-10 flex items-center justify-center relative cursor-pointer">
                       {isToday && isMixed && mixedConic ? (
-                        <div className="absolute inset-1 rounded-full" style={{ background: mixedConic, boxShadow: "0 8px 20px rgba(35,50,100,0.3)", border: "2px solid #fff" }} />
+                        <div className="absolute inset-1 rounded-full" style={{ background: mixedConic, boxShadow: "0 8px 20px rgba(118,57,255,0.25)", border: "2px solid #7639FF" }} />
                       ) : isToday ? (
                         <div
                           className="absolute inset-1 rounded-full"
@@ -174,17 +174,16 @@ export default function DesignPreviewSchedule() {
                           }}
                         />
                       ) : isMixed && mixedConic ? (
-                        <div className="absolute inset-1 rounded-full" style={{ background: mixedConic, opacity: 0.85 }} />
+                        <div className="absolute inset-1 rounded-full" style={{ background: mixedConic }} />
                       ) : (
                         meta && <div className="absolute inset-1 rounded-full" style={{ background: meta.tint }} />
                       )}
                       <span
                         className="text-[16px] relative z-10 transition-colors font-bold"
                         style={{
-                          color: isToday || isMixed ? "#fff" : meta ? meta.grad[0] : isWorkScheduled ? LH.onSurfaceVariant : `${LH.onSurfaceVariant}66`,
+                          color: isMixed ? "#101A46" : isToday ? LH.onPrimary : meta ? meta.grad[0] : isWorkScheduled ? LH.onSurfaceVariant : `${LH.onSurfaceVariant}66`,
                           fontWeight: isToday || isMixed || meta ? 700 : 400,
-                          textShadow: isMixed ? "0 1px 3px rgba(0,0,0,0.35)" : undefined,
-                        }}
+                                                  }}
                       >
                         {day}
                       </span>
@@ -273,6 +272,7 @@ export default function DesignPreviewSchedule() {
         settings={settings}
         onClose={() => setModalDate(null)}
         onSaved={refresh}
+        onSettingsUpdated={setSettings}
       />
     </div>
   );

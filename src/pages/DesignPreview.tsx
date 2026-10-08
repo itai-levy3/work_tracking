@@ -15,6 +15,7 @@ import {
   formatHM,
   fractionMultiplier,
   getCountedHours,
+  getDisplayHours,
   getEffectiveDailyTarget,
   getMilestoneMessageForToday,
   getProfileFirstName,
@@ -1171,6 +1172,7 @@ export default function DesignPreview() {
                 const statusMeta = isOff ? STATUS_META[entry.status as DayStatus] : null;
                 const target = getEffectiveDailyTarget(entry.date, entry, settings);
                 const worked = getCountedHours(entry);
+                const displayedDayHours = getDisplayHours(entry, target);
                 const diff = worked - target;
                 // A shift that's still open (clocked in, not yet out) hasn't been judged short or
                 // long yet — getCountedHours deliberately returns 0 for the running segment, so
@@ -1292,7 +1294,7 @@ export default function DesignPreview() {
                           </span>
                         )}
                       </div>
-                      <span className="text-[24px] font-bold tabular-nums" style={{ color: "#101A46", minWidth: 64, textAlign: "left" }}>{formatHM(worked)}</span>
+                      <span className="text-[24px] font-bold tabular-nums" style={{ color: "#101A46", minWidth: 64, textAlign: "left" }}>{formatHM(displayedDayHours)}</span>
                     </div>
                   </div>
                 );
@@ -1322,6 +1324,7 @@ export default function DesignPreview() {
         settings={settings}
         onClose={() => setDayModalDate(null)}
         onSaved={refresh}
+        onSettingsUpdated={setSettings}
       />
 
       <ClockInEditModal

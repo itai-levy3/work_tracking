@@ -821,12 +821,12 @@ export const getCountedHours = (entry: WorkHour | undefined): number => {
  * deducted from the balance yet — it only counts once that specific day actually arrives, so the
  * balance right now always reflects only what's genuinely been used so far.
  */
-export const computeLeaveUsage = (year: number, type: "vacation" | "sick", settings: UserSettings, asOfDate: Date = new Date()): number => {
+export const computeLeaveUsage = (year: number, type: "vacation" | "sick", settings: UserSettings, asOfDate: Date = new Date(), excludeDate?: string): number => {
   const entries = getWorkHoursForYear(year);
   const asOfDateKey = `${asOfDate.getFullYear()}-${String(asOfDate.getMonth() + 1).padStart(2, "0")}-${String(asOfDate.getDate()).padStart(2, "0")}`;
   let used = 0;
   for (const w of entries) {
-    if (w.date > asOfDateKey) continue;
+    if (w.date > asOfDateKey || w.date === excludeDate) continue;
     if (w.dayParts && w.dayParts.length > 0) {
       const target = getEffectiveDailyTarget(w.date, w, settings);
       if (target <= 0) continue;
@@ -894,15 +894,43 @@ export const computeUnpaidLeaveDeductions = (year: number, month: number, settin
       }
       continue;
     }
-    if ((w.status === "vacation" || w.status === "sick") && w.paid === false) {
-      const unpaidHours = w.leaveHours !== undefined ? w.leaveHours : fractionMultiplier(w.fraction) * target;
-      push(w.date, w.status, unpaidHours, target);
-    } else if (w.status === "holiday" && w.remainderPaid === false) {
-      const unpaidHours = target - effectiveDayFraction(w, target) * target;
-      push(w.date, "vacation", unpaidHours, target);
-    }
+    const plainUnpaid = getPlainUnpaidHours(w, target);
+    if (plainUnpaid > 0) push(w.date, w.status === "holiday" ? "vacation" : (w.status as "vacation" | "sick"), plainUnpaid, target);
   }
   return results.sort((a, b) => a.date.localeCompare(b.date));
+};
+
+/**
+ * Hours of a plain (non-"יום מגוון") leave day that went unpaid — the whole request of an unpaid
+ * vacation/sick day, or the declined remainder of a partial holiday. 0 for everything else.
+ */
+export const getPlainUnpaidHours = (w: WorkHour, target: number): number => {
+  if (w.dayParts && w.dayParts.length > 0) return 0;
+  if ((w.status === "vacation" || w.status === "sick") && w.paid === false) {
+    return w.leaveHours !== undefined ? w.leaveHours : fractionMultiplier(w.fraction) * target;
+  }
+  if (w.status === "holiday" && w.remainderPaid === false) return Math.max(0, target - effectiveDayFraction(w, target) * target);
+  return 0;
+};
+
+/** The hours a day REPRESENTS for display: counted (paid) hours plus any unpaid leave hours, so an
+ * unpaid sick day still reads "9:00" with a separate unpaid note instead of a misleading "0:00". */
+export const getDisplayHours = (w: WorkHour, target: number): number => getCountedHours(w) + getPlainUnpaidHours(w, target);
+
+/**
+ * Leave days still available for a given date, in days (negative = already overdrawn). Accrual is
+ * measured as of that date (or today, for a past date) and usage excludes the day being edited, so
+ * re-saving an existing day never double-counts itself against its own balance.
+ */
+export const getLeaveBalanceRemaining = (type: "vacation" | "sick", settings: UserSettings, forDate: string): number => {
+  const today = new Date();
+  const d = new Date(`${forDate}T00:00:00`);
+  const asOf = d > today ? d : today;
+  const annual = type === "vacation" ? settings.annual_vacation_days || 0 : settings.annual_sick_days || 0;
+  const method = type === "vacation" ? settings.vacation_accrual_method : settings.sick_accrual_method;
+  const accrued = computeCumulativeAccrued(annual, method, settings.employment_start_date, asOf);
+  const used = computeCumulativeLeaveUsage(type, settings, today, forDate);
+  return accrued - used;
 };
 
 /**
@@ -1028,11 +1056,12 @@ export const computeCumulativeLeaveUsage = (
   type: "vacation" | "sick",
   settings: UserSettings,
   asOfDate: Date = new Date(),
+  excludeDate?: string,
 ): number => {
   const startYear = settings.employment_start_date ? new Date(`${settings.employment_start_date}T00:00:00`).getFullYear() : asOfDate.getFullYear();
   let total = 0;
   for (let y = startYear; y <= asOfDate.getFullYear(); y++) {
-    total += computeLeaveUsage(y, "vacation" === type ? "vacation" : "sick", settings);
+    total += computeLeaveUsage(y, "vacation" === type ? "vacation" : "sick", settings, asOfDate, excludeDate);
   }
   return +total.toFixed(3);
 };

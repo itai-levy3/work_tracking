@@ -9,10 +9,15 @@ import {
   DayPart,
   DayStatus,
   deleteWorkHourByDate,
+  effectiveDayFraction,
   fractionMultiplier,
   formatHM,
   getCountedHours,
+  getDisplayHours,
   getEffectiveDailyTarget,
+  getLeaveBalanceRemaining,
+  getPlainUnpaidHours,
+  saveSettings,
   upsertWorkHour,
   UserSettings,
   WorkHour,
@@ -46,12 +51,16 @@ const SATELLITES = [0, 120, 240];
 
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
+type BalancePrompt = { merged: WorkHour; type: "vacation" | "sick"; days: number; remaining: number; resolved: ("vacation" | "sick")[]; step: "choice" | "setLimit" | "limitExceeded" };
+
 interface DayDetailModalProps {
   date: Date | null;
   entry: WorkHour | undefined;
   settings: UserSettings;
   onClose: () => void;
   onSaved: () => void;
+  /** Called after a balance prompt saves a new negative-balance limit, so the parent screen's own copy of settings stays in sync. */
+  onSettingsUpdated?: (s: UserSettings) => void;
 }
 
 const modalStyle = `
@@ -133,7 +142,13 @@ const modalStyle = `
  * (or a blank day) opens a compact rounded card, both centered on screen — never a corner-boxed
  * dialog or a bottom sheet.
  */
-export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayDetailModalProps) {
+export function DayDetailModal({ date, entry, settings: settingsProp, onClose, onSaved, onSettingsUpdated }: DayDetailModalProps) {
+  // A negative-balance limit saved from the prompt below applies immediately, even before the
+  // parent screen re-reads settings.
+  const [settingsOverride, setSettingsOverride] = useState<UserSettings | null>(null);
+  const settings = settingsOverride ?? settingsProp;
+  const [balancePrompt, setBalancePrompt] = useState<BalancePrompt | null>(null);
+  const [limitDraft, setLimitDraft] = useState("3");
   const [draft, setDraft] = useState<Partial<WorkHour>>({});
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -167,12 +182,13 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
     setSplitWorked(!!entry && !!entry.status && entry.status !== "worked" && !!entry.start_time && !!entry.end_time);
     setMixedMode(!!entry?.dayParts?.length);
     setMixedParts(entry?.dayParts ? entry.dayParts.map((p) => ({ ...p })) : []);
+    setBalancePrompt(null);
   }, [date, entry]);
 
   // Counts the orb's hero number up from 0 to its real value on open, for a livelier reveal.
   useEffect(() => {
     if (editing || !entry) return;
-    const target = getCountedHours(entry);
+    const target = getDisplayHours(entry, getEffectiveDailyTarget(entry.date, entry, settings));
     if (target <= 0) {
       setDisplayedHours(0);
       return;
@@ -193,6 +209,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
       cancelAnimationFrame(raf);
       window.clearTimeout(settle);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing, entry]);
 
   if (!date) return null;
@@ -495,7 +512,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
   const isLiveOpenShift = status === "worked" && !!draft.start_time && !draft.end_time;
   const canConvertToMixed = !!entry && !isLiveOpenShift && target > 0 && target - getCountedHours(entry) > 0.01;
 
-  const save = (overrides: Partial<WorkHour> = {}) => {
+  const buildMerged = (overrides: Partial<WorkHour> = {}): WorkHour => {
     if (mixedMode) {
       const parts = mixedParts.filter((p) => (p.hours || 0) > 0);
       const merged: WorkHour = {
@@ -515,11 +532,7 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
         dayParts: parts,
         ...overrides,
       };
-      upsertWorkHour(merged);
-      onSaved();
-      onClose();
-      toast.success("היום עודכן");
-      return;
+      return merged;
     }
     const merged: WorkHour = {
       date: dateKey(date),
@@ -576,10 +589,117 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
       merged.hours_worked = calcHours(merged.start_time, merged.end_time);
       merged.segments = merged.start_time && merged.end_time ? [{ start: merged.start_time, end: merged.end_time, evening: merged.evening }] : undefined;
     }
+    return merged;
+  };
+
+  // ---- Leave-balance check (same rules as the home screen's quick-mark buttons) ----
+  // A vacation/sick request bigger than what's left asks the user, per specific day, whether to go
+  // negative (repaid by future accrual) or dock that day's pay — whether the day is filled in from
+  // the calendar or from the attendance card (both open this same modal).
+  const commit = (merged: WorkHour) => {
     upsertWorkHour(merged);
     onSaved();
     onClose();
     toast.success("היום עודכן");
+  };
+
+  /** How many days of each balance this day draws on — only slices that are actually PAID from it. */
+  const balanceDemands = (m: WorkHour): { type: "vacation" | "sick"; days: number }[] => {
+    const t = getEffectiveDailyTarget(m.date, m, settings);
+    if (t <= 0) return [];
+    const acc: Record<"vacation" | "sick", number> = { vacation: 0, sick: 0 };
+    if (m.dayParts && m.dayParts.length > 0) {
+      for (const p of m.dayParts) {
+        if ((p.category === "vacation" || p.category === "sick") && p.paid !== false) acc[p.category] += (p.hours || 0) / t;
+      }
+    } else if ((m.status === "vacation" || m.status === "sick") && m.paid !== false) {
+      acc[m.status] += effectiveDayFraction(m, t);
+    } else if (m.status === "holiday" && m.remainderPaid !== false) {
+      acc.vacation += 1 - effectiveDayFraction(m, t);
+    }
+    return (["vacation", "sick"] as const).filter((k) => acc[k] > 0.001).map((k) => ({ type: k, days: acc[k] }));
+  };
+
+  /** Docks pay for the part of the request the balance can't cover — splitting the day at the exact
+   * boundary when some balance is left (paid slice + unpaid slice), or marking it all unpaid. */
+  const applyUnpaid = (m: WorkHour, type: "vacation" | "sick", days: number, remaining: number): WorkHour => {
+    const t = getEffectiveDailyTarget(m.date, m, settings);
+    const paidDays = Math.min(days, Math.max(0, remaining));
+    const unpaidDays = days - paidDays;
+    const workedHours = m.start_time && m.end_time && !m.dayParts?.length ? calcHours(m.start_time, m.end_time) : 0;
+    const mkId = () => nextMixedPartId();
+    if (m.dayParts && m.dayParts.length > 0) {
+      const keep = m.dayParts.filter((p) => !(p.category === type && p.paid !== false));
+      const parts: DayPart[] = [...keep];
+      if (paidDays > 0.001) parts.push({ id: mkId(), category: type, hours: paidDays * t, paid: true });
+      if (unpaidDays > 0.001) parts.push({ id: mkId(), category: type, hours: unpaidDays * t, paid: false });
+      return { ...m, dayParts: parts, hours_worked: parts.reduce((s, p) => s + p.hours, 0) };
+    }
+    if (paidDays <= 0.001) {
+      if (m.status === "holiday") return { ...m, remainderPaid: false, hours_worked: workedHours + effectiveDayFraction(m, t) * t };
+      return { ...m, paid: false, hours_worked: workedHours };
+    }
+    const parts: DayPart[] = [];
+    if (workedHours > 0) parts.push({ id: mkId(), category: "worked", hours: workedHours, start: m.start_time, end: m.end_time });
+    if (m.status === "holiday") parts.push({ id: mkId(), category: "holiday", hours: effectiveDayFraction(m, t) * t });
+    parts.push({ id: mkId(), category: type, hours: paidDays * t, paid: true });
+    if (unpaidDays > 0.001) parts.push({ id: mkId(), category: type, hours: unpaidDays * t, paid: false });
+    return {
+      ...m,
+      status: undefined,
+      fraction: undefined,
+      paid: undefined,
+      remainderPaid: undefined,
+      leaveHours: undefined,
+      start_time: null,
+      end_time: null,
+      segments: undefined,
+      dayParts: parts,
+      hours_worked: parts.reduce((s, p) => s + p.hours, 0),
+    };
+  };
+
+  const resolveBalance = (merged: WorkHour, resolved: ("vacation" | "sick")[]) => {
+    const offending = balanceDemands(merged).find((d) => {
+      if (resolved.includes(d.type)) return false;
+      return d.days > getLeaveBalanceRemaining(d.type, settings, merged.date) + 0.001;
+    });
+    if (!offending) {
+      commit(merged);
+      return;
+    }
+    setBalancePrompt({ merged, type: offending.type, days: offending.days, remaining: getLeaveBalanceRemaining(offending.type, settings, merged.date), resolved, step: "choice" });
+  };
+
+  const save = (overrides: Partial<WorkHour> = {}) => resolveBalance(buildMerged(overrides), []);
+
+  const chooseNegative = (bp: BalancePrompt, s: UserSettings) => {
+    const limit = bp.type === "vacation" ? s.vacation_negative_limit : s.sick_negative_limit;
+    if (limit === undefined) {
+      setBalancePrompt({ ...bp, step: "setLimit" });
+      return;
+    }
+    if (bp.remaining - bp.days >= -limit - 0.001) {
+      setBalancePrompt(null);
+      resolveBalance(bp.merged, [...bp.resolved, bp.type]);
+      return;
+    }
+    setBalancePrompt({ ...bp, step: "limitExceeded" });
+  };
+
+  const chooseUnpaid = (bp: BalancePrompt) => {
+    const next = applyUnpaid(bp.merged, bp.type, bp.days, bp.remaining);
+    setBalancePrompt(null);
+    resolveBalance(next, [...bp.resolved, bp.type]);
+  };
+
+  const saveLimitAndRetry = (bp: BalancePrompt) => {
+    const n = Math.max(0, Math.round(Number(limitDraft) || 0));
+    const updated: UserSettings = { ...settings, ...(bp.type === "vacation" ? { vacation_negative_limit: n } : { sick_negative_limit: n }) };
+    saveSettings(updated);
+    setSettingsOverride(updated);
+    onSettingsUpdated?.(updated);
+    chooseNegative(bp, updated);
   };
 
   // Each shift on a multi-segment day is edited independently — never derived from a single
@@ -834,6 +954,13 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
                   <div className="flex items-center gap-2 px-4 py-2 rounded-full" style={{ background: meta.tint }}>
                     <span className="text-[13px] font-bold" style={{ color: "#101A46" }}>
                       {draft.leaveHours !== undefined ? `${formatHM(draft.leaveHours)} שעות` : FRACTION_LABEL[draft.fraction || "full"]} · {draft.paid !== false ? "משולם" : "לא משולם"}
+                    </span>
+                  </div>
+                )}
+                {entry && getPlainUnpaidHours(entry, target) > 0.01 && (
+                  <div className="flex items-center gap-2 px-4 py-1.5 rounded-full" style={{ background: "rgba(220,38,38,0.1)" }}>
+                    <span className="text-[12.5px] font-bold" style={{ color: "#DC2626" }}>
+                      {formatHM(getPlainUnpaidHours(entry, target))} לא משולם - ₪{Math.round(getPlainUnpaidHours(entry, target) * mixedBaseRate).toLocaleString("he-IL")}
                     </span>
                   </div>
                 )}
@@ -1434,6 +1561,94 @@ export function DayDetailModal({ date, entry, settings, onClose, onSaved }: DayD
               </button>
             </div>
           )}
+          {/* Leave-balance prompt — a vacation/sick request bigger than what's left asks, for this
+              specific day, whether to go negative or dock pay (same choices as the home buttons). */}
+          {balancePrompt && (() => {
+            const bp = balancePrompt;
+            const lt = bp.type === "vacation" ? "חופש" : "מחלה";
+            const m = STATUS_META[bp.type];
+            const t = getEffectiveDailyTarget(bp.merged.date, bp.merged, settings);
+            const rate = computeEffectiveHourlyRateForMonth(date.getFullYear(), date.getMonth(), settings);
+            const paidDays = Math.min(bp.days, Math.max(0, bp.remaining));
+            const unpaidDays = bp.days - paidDays;
+            const loss = Math.round(unpaidDays * t * rate);
+            const btnGrad = { background: `linear-gradient(155deg, ${m.grad[0]}, ${m.grad[1]})`, boxShadow: `0 16px 32px -10px ${m.glow}` };
+            return (
+              <div className="absolute inset-0 z-20 flex items-center justify-center px-6" style={{ background: "rgba(16,26,70,0.55)", backdropFilter: "blur(4px)" }}>
+                <div className="w-full max-w-[380px] rounded-[32px] p-7 flex flex-col gap-4" style={{ background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,255,0.99))", boxShadow: "0 30px 70px -15px rgba(16,26,70,0.4)" }}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={btnGrad}>
+                      <span className="material-symbols-outlined text-white" style={{ fontSize: 22 }}>{m.icon}</span>
+                    </div>
+                    <div>
+                      <div className="text-[16px] font-bold" style={{ color: "#101A46" }}>אין מספיק ימי {lt}</div>
+                      <div className="text-[12px] font-medium" style={{ color: "#8892b0" }}>{date.getDate()} ב{MONTH_HE[date.getMonth()]}</div>
+                    </div>
+                  </div>
+
+                  {bp.step === "choice" && (
+                    <>
+                      <div className="text-[13px] font-semibold leading-relaxed" style={{ color: "#46464f" }}>
+                        ביקשת {bp.days.toFixed(2)} ימים, ונותרו לך {Math.max(0, bp.remaining).toFixed(2)}. איך להמשיך עם היום הזה?
+                      </div>
+                      <button onClick={() => chooseNegative(bp, settings)} className="w-full h-12 rounded-2xl font-bold text-white" style={btnGrad}>
+                        להיכנס למינוס
+                      </button>
+                      <button onClick={() => chooseUnpaid(bp)} className="w-full py-3 px-4 rounded-2xl font-bold flex flex-col items-center gap-0.5" style={{ background: m.tint, color: m.grad[0] }}>
+                        <span>קיזוז בשכר</span>
+                        <span className="text-[11px] font-semibold" style={{ color: "#DC2626" }}>
+                          {paidDays > 0.001 ? `${paidDays.toFixed(2)} ימים מהיתרה, ` : ""}{unpaidDays.toFixed(2)} ימים לא משולמים · −₪{loss.toLocaleString("he-IL")}
+                        </span>
+                      </button>
+                      <button onClick={() => setBalancePrompt(null)} className="w-full h-10 rounded-xl text-[13px] font-bold" style={{ color: "#8892b0" }}>
+                        ביטול
+                      </button>
+                    </>
+                  )}
+
+                  {bp.step === "setLimit" && (
+                    <>
+                      <div className="text-[13px] font-semibold leading-relaxed" style={{ color: "#46464f" }}>
+                        עד כמה ימים אפשר להיכנס למינוס ב{bp.type === "vacation" ? "ימי חופש" : "ימי מחלה"} במקום העבודה שלך?
+                      </div>
+                      <input
+                        type="number"
+                        min={0}
+                        value={limitDraft}
+                        onChange={(e) => setLimitDraft(e.target.value)}
+                        className="w-full h-12 rounded-2xl px-4 text-[16px] font-bold text-center"
+                        style={{ background: m.tint, color: "#101A46", border: "none", outline: "none" }}
+                        dir="ltr"
+                      />
+                      <button onClick={() => saveLimitAndRetry(bp)} className="w-full h-12 rounded-2xl font-bold text-white" style={btnGrad}>
+                        שמירה והמשך
+                      </button>
+                    </>
+                  )}
+
+                  {bp.step === "limitExceeded" && (
+                    <>
+                      <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ background: "rgba(220,38,38,0.08)" }}>
+                        <span className="material-symbols-outlined" style={{ color: "#DC2626", fontSize: 18 }}>warning</span>
+                        <span className="text-[12.5px] font-semibold" style={{ color: "#DC2626" }}>
+                          היום הזה חורג ממגבלת המינוס שהוגדרה ב{bp.type === "vacation" ? "ימי חופש" : "ימי מחלה"}.
+                        </span>
+                      </div>
+                      <button onClick={() => setBalancePrompt({ ...bp, step: "setLimit" })} className="w-full h-12 rounded-2xl font-bold text-white" style={btnGrad}>
+                        עדכון המגבלה
+                      </button>
+                      <button onClick={() => chooseUnpaid(bp)} className="w-full py-3 px-4 rounded-2xl font-bold flex flex-col items-center gap-0.5" style={{ background: m.tint, color: m.grad[0] }}>
+                        <span>קיזוז בשכר</span>
+                        <span className="text-[11px] font-semibold" style={{ color: "#DC2626" }}>
+                          {paidDays > 0.001 ? `${paidDays.toFixed(2)} ימים מהיתרה, ` : ""}{unpaidDays.toFixed(2)} ימים לא משולמים · −₪{loss.toLocaleString("he-IL")}
+                        </span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </RxDialog.Content>
       </RxDialog.Portal>
     </RxDialog.Root>
