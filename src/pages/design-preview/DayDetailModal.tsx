@@ -392,7 +392,7 @@ export function DayDetailModal({ date, entry, settings: settingsProp, onClose, o
           <div className="absolute -left-10 -bottom-12 w-44 h-44 rounded-full pointer-events-none" style={{ background: "rgba(255,255,255,0.1)" }} />
 
           {/* Clock-face tick marks — this orb documents hours, so it reads like a watch face */}
-          <svg className="absolute inset-0" viewBox="0 0 250 250" style={{ opacity: 0.55 }}>
+          <svg aria-hidden="true" className="absolute inset-0" viewBox="0 0 250 250" style={{ opacity: 0.55 }}>
             {Array.from({ length: 12 }).map((_, i) => {
               const angle = (i / 12) * 2 * Math.PI - Math.PI / 2;
               const isMajor = i % 3 === 0;
@@ -414,7 +414,7 @@ export function DayDetailModal({ date, entry, settings: settingsProp, onClose, o
           </svg>
           {/* Crisp white dividers between a mixed day's slices, like the edges of pie pieces */}
           {o.dividerAngles && o.dividerAngles.length > 0 && (
-            <svg className="absolute inset-0" viewBox="0 0 250 250">
+            <svg aria-hidden="true" className="absolute inset-0" viewBox="0 0 250 250">
               {o.dividerAngles.map((deg) => {
                 const rad = (deg * Math.PI) / 180;
                 return (
@@ -1252,7 +1252,7 @@ export function DayDetailModal({ date, entry, settings: settingsProp, onClose, o
                     </div>
                     <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(35,50,100,0.08)" }}>
                       <div
-                        className="h-full rounded-full transition-all"
+                        className="h-full rounded-full transition-[width,background-color]"
                         style={{
                           width: `${target > 0 ? Math.min(100, (mixedTotalHours / target) * 100) : 0}%`,
                           background: mixedTotalHours > target + 0.01 ? "#DC2626" : "linear-gradient(90deg, #7639FF, #00D2FF)",

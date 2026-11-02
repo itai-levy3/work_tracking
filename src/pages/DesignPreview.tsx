@@ -595,12 +595,12 @@ export default function DesignPreview() {
 
           {/* Shift timer hero */}
           <div className="lh-rise bg-white/70 backdrop-blur-2xl rounded-[32px] p-6 relative flex flex-col items-center overflow-hidden border border-white/60" style={{ animationDelay: "80ms", boxShadow: "0 24px 48px rgba(35,50,100,0.06)" }}>
-            <div className="text-[12px] font-bold leading-4 tracking-[0.08em] text-[#46464f] mb-2 z-10 uppercase" style={{ letterSpacing: "0.15em" }}>
+            <div className="text-[12px] font-bold leading-4 text-[#46464f] mb-2 z-10" style={{ letterSpacing: "0.15em" }}>
               {isClockedIn ? "זמן נותר עד סיום המשמרת" : "טרם נרשמה כניסה היום"}
             </div>
 
             <div className="relative w-full max-w-[320px] z-10" style={{ height: 148, overflow: "hidden", perspective: 700 }}>
-              <svg
+              <svg aria-hidden="true"
                 className="absolute bottom-2 w-full"
                 style={{ height: "230%", transform: "rotateX(14deg) scale(1.06)", transformOrigin: "50% 100%", filter: "drop-shadow(0 14px 22px rgba(118,57,255,0.28)) drop-shadow(0 4px 10px rgba(0,210,255,0.25))" }}
                 viewBox="0 0 100 100"
@@ -648,7 +648,7 @@ export default function DesignPreview() {
               >
                 {countdown ? `${!isOpenStopwatch && countdown.overtime ? "+" : ""}${countdown.text}` : "--:--:--"}
               </span>
-              <span className="text-[13px] font-bold tracking-[0.08em] mt-3 px-4 py-1.5 rounded-full border" style={{ color: "#7639FF", background: "rgba(118,57,255,0.07)", borderColor: "rgba(118,57,255,0.15)" }}>
+              <span className="text-[13px] font-bold mt-3 px-4 py-1.5 rounded-full border" style={{ color: "#7639FF", background: "rgba(118,57,255,0.07)", borderColor: "rgba(118,57,255,0.15)" }}>
                 {isOpenStopwatch
                   ? "טיימר פתוח — סוגרים מתי שרוצים"
                   : isPartTime
@@ -666,7 +666,7 @@ export default function DesignPreview() {
                 disabled={!isClockedIn}
                 className="flex-1 flex flex-col items-center bg-white/50 backdrop-blur-md rounded-2xl px-4 py-3 border border-white shadow-sm relative"
               >
-                <span className="text-[12px] font-bold tracking-[0.08em] text-[#46464f] mb-1 flex items-center gap-1">
+                <span className="text-[12px] font-bold text-[#46464f] mb-1 flex items-center gap-1">
                   כניסה
                   {isClockedIn && <span className="material-symbols-outlined" style={{ fontSize: 13, color: "#7639FF" }}>edit</span>}
                 </span>
@@ -674,7 +674,7 @@ export default function DesignPreview() {
               </button>
               {!isOpenStopwatch && (
                 <div className="flex-1 flex flex-col items-center bg-white/50 backdrop-blur-md rounded-2xl px-4 py-3 border border-white shadow-sm">
-                  <span className="text-[12px] font-bold tracking-[0.08em] text-[#46464f] mb-1">{todayEntry?.end_time ? "יציאה" : "יציאה משוערת"}</span>
+                  <span className="text-[12px] font-bold text-[#46464f] mb-1">{todayEntry?.end_time ? "יציאה" : "יציאה משוערת"}</span>
                   <span className="text-[24px] font-bold tabular-nums leading-none" style={{ color: "#101A46" }}>{todayEntry?.end_time || estimatedExit || "--:--"}</span>
                 </div>
               )}
@@ -807,7 +807,7 @@ export default function DesignPreview() {
               <div className="absolute -top-20 left-1/3 w-64 h-64 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(118,57,255,0.1), transparent 70%)" }} />
               <div className="absolute -bottom-20 right-1/4 w-56 h-56 rounded-full pointer-events-none" style={{ background: "radial-gradient(circle, rgba(0,210,255,0.08), transparent 70%)" }} />
 
-              <svg className="absolute pointer-events-none kpi-orbit" style={{ width: 420, height: 420, top: "50%", left: "50%", marginTop: -210, marginLeft: -210, opacity: 0.35 }} viewBox="0 0 100 100">
+              <svg aria-hidden="true" className="absolute pointer-events-none kpi-orbit" style={{ width: 420, height: 420, top: "50%", left: "50%", marginTop: -210, marginLeft: -210, opacity: 0.35 }} viewBox="0 0 100 100">
                 <circle cx="50" cy="50" r="47" fill="none" stroke="url(#orbitGrad)" strokeWidth="0.4" strokeDasharray="0.5 4" strokeLinecap="round" />
                 <defs>
                   <linearGradient id="orbitGrad" x1="0%" x2="100%" y1="0%" y2="100%">
@@ -889,7 +889,7 @@ export default function DesignPreview() {
                           className="relative flex items-center justify-center rounded-full"
                           style={{ width: k.size, height: k.size, background: "linear-gradient(155deg, rgba(255,255,255,0.9), rgba(255,255,255,0.5))", boxShadow: `0 14px 28px -10px ${k.glow}, inset 0 2px 3px rgba(255,255,255,0.9), inset 0 -3px 6px rgba(35,50,100,0.08)` }}
                         >
-                          <svg className="absolute inset-0 w-full h-full" style={{ transform: "rotate(-90deg)" }} viewBox="0 0 100 100">
+                          <svg aria-hidden="true" className="absolute inset-0 w-full h-full" style={{ transform: "rotate(-90deg)" }} viewBox="0 0 100 100">
                             <defs>
                               <linearGradient id={`kpiGrad${i}`} x1="0%" x2="100%" y1="0%" y2="100%">
                                 <stop offset="0%" stopColor={k.grad[0]} />
@@ -947,7 +947,7 @@ export default function DesignPreview() {
             <div className="flex flex-col items-center text-center z-10 w-full">
               <span className="text-[16px] font-bold mb-1" style={{ color: "#101A46" }}>שעות עבודה החודש</span>
               <div className="relative w-full h-32 flex items-center justify-center my-4">
-                <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="xMidYMid meet" viewBox="0 0 200 100">
+                <svg aria-hidden="true" className="absolute inset-0 w-full h-full" preserveAspectRatio="xMidYMid meet" viewBox="0 0 200 100">
                   <defs>
                     <linearGradient id="torusGrad" x1="0%" x2="100%" y1="0%" y2="100%">
                       <stop offset="0%" stopColor="#7639FF" />
@@ -998,7 +998,7 @@ export default function DesignPreview() {
               >
                 {Math.round(percentage)}%
               </span>
-              <span className="text-[11px] font-bold uppercase tracking-wider relative z-10" style={{ color: "#8892b0" }}>התקדמות חודשית</span>
+              <span className="text-[11px] font-bold relative z-10" style={{ color: "#8892b0" }}>התקדמות חודשית</span>
             </div>
           </div>
 
@@ -1088,7 +1088,7 @@ export default function DesignPreview() {
                             className="relative flex items-center justify-center rounded-full"
                             style={{ width: size, height: size, background: "linear-gradient(155deg, rgba(255,255,255,0.9), rgba(255,255,255,0.5))", boxShadow: `0 16px 32px -10px ${glow}, inset 0 2px 3px rgba(255,255,255,0.9), inset 0 -3px 6px rgba(35,50,100,0.08)` }}
                           >
-                            <svg className="absolute inset-0 w-full h-full" style={{ transform: "rotate(-90deg)" }} viewBox="0 0 100 100">
+                            <svg aria-hidden="true" className="absolute inset-0 w-full h-full" style={{ transform: "rotate(-90deg)" }} viewBox="0 0 100 100">
                               <defs>
                                 <linearGradient id={`rubricGrad-${r2.key}`} x1="0%" x2="100%" y1="0%" y2="100%">
                                   <stop offset="0%" stopColor={grad[0]} />
@@ -1117,7 +1117,7 @@ export default function DesignPreview() {
                               >
                                 {remaining.toFixed(2)}
                               </span>
-                              <span className="text-[9px] font-bold uppercase tracking-wider mt-0.5" style={{ color: "#8892b0" }}>ימים זמינים</span>
+                              <span className="text-[9px] font-bold mt-0.5" style={{ color: "#8892b0" }}>ימים זמינים</span>
                               <span className="text-[10px] font-medium tabular-nums mt-1" style={{ color: "#8892b0" }}>נוצלו {r2.used.toFixed(2)} מתוך {r2.annual.toFixed(1)}</span>
                             </div>
                           </div>
@@ -1244,7 +1244,7 @@ export default function DesignPreview() {
                     <div className="flex flex-col pl-4 pr-3">
                       <span className="text-[16px] font-bold" style={{ color: "#101A46" }}>{date.getDate()} ב{MONTH_HE[date.getMonth()]}</span>
                       <span
-                        className="text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5"
+                        className="text-[11px] font-bold flex items-center gap-1.5"
                         style={{ color: isMixed ? "#7639FF" : statusMeta ? statusMeta.grad[0] : isToday ? "#7639FF" : "#46464f" }}
                       >
                         {isMixed && <span className="material-symbols-outlined" style={{ fontSize: 13 }}>grid_view</span>}
@@ -1329,7 +1329,7 @@ export default function DesignPreview() {
             {allMonthDays.length > 5 && (
               <button
                 onClick={() => setAttendanceExpanded((v) => !v)}
-                className="mx-auto mt-4 px-6 py-2.5 rounded-full bg-white/60 backdrop-blur-md border border-white shadow-sm hover:bg-white/80 transition-colors text-[13px] font-bold flex items-center gap-2 uppercase tracking-wide"
+                className="mx-auto mt-4 px-6 py-2.5 rounded-full bg-white/60 backdrop-blur-md border border-white shadow-sm hover:bg-white/80 transition-colors text-[13px] font-bold flex items-center gap-2"
                 style={{ color: "#101A46" }}
               >
                 {attendanceExpanded ? "כווץ" : `הרחב · כל ${allMonthDays.length} הימים בחודש`}

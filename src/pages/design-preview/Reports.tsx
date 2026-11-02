@@ -8,6 +8,7 @@ import {
   computeCurrentMonthToDatePayroll,
   computeMonthlyPayroll,
   computeProjectedMonthlyPayroll,
+  computeShortfallCarry,
   computeUnpaidLeaveDeductions,
   deletePayrollActual,
   formatHM,
@@ -158,11 +159,21 @@ export default function DesignPreviewReports() {
 
   // ---- Unpaid vacation/sick days: the one thing that cuts pay itself. Shown as its own line in BOTH the
   // gross and the net composition, on top of the pay "as if" those days had been paid. ----
-  const vacationDeductions = deductions.filter((d) => d.type === "vacation");
-  const sickDeductions = deductions.filter((d) => d.type === "sick");
-  const vacationTotal = vacationDeductions.reduce((s, d) => s + d.amount, 0);
-  const sickTotal = sickDeductions.reduce((s, d) => s + d.amount, 0);
-  const totalDeducted = vacationTotal + sickTotal;
+  // With "הורדות מגולמות בשכר של חודש אחרי" the cut on THIS payslip is last month's missing hours and unpaid
+  // days, net of the vacation/sick days accrued in between; this month's own land on the next payslip.
+  const shortfallNext = settings.shortfall_payout_month === "next";
+  const carry = payroll.shortfallCarry;
+  const prevMonthDate = new Date(year, month - 1, 1);
+  const nextMonthDate = new Date(year, month + 1, 1);
+  const leaveItems = shortfallNext ? computeUnpaidLeaveDeductions(prevMonthDate.getFullYear(), prevMonthDate.getMonth(), settings) : deductions;
+  const vacationDeductions = leaveItems.filter((d) => d.type === "vacation");
+  const sickDeductions = leaveItems.filter((d) => d.type === "sick");
+  const vacationTotal = shortfallNext ? carry.vacation.deductedAmount : vacationDeductions.reduce((s, d) => s + d.amount, 0);
+  const sickTotal = shortfallNext ? carry.sick.deductedAmount : sickDeductions.reduce((s, d) => s + d.amount, 0);
+  const shortfallCut = shortfallNext ? carry.shortfallPay : 0;
+  const totalDeducted = vacationTotal + sickTotal + shortfallCut;
+  // What this month's own shortfall will take off next month's payslip (a forecast while the month is running).
+  const nextCarry = shortfallNext ? computeShortfallCarry(nextMonthDate.getFullYear(), nextMonthDate.getMonth(), settings) : null;
   const totalHours = payroll.regularHours + payroll.overtimeHours;
 
   // ---- Month-final figures. Gross and overtime (and the two deduction totals) can be corrected from the
@@ -175,9 +186,12 @@ export default function DesignPreviewReports() {
   const mandatoryShown = overrides?.__mandatory ?? mandatoryComputed;
   const providentShown = overrides?.__provident ?? providentComputed;
   const grossSystem = grossOf(payroll);
-  const baseGrossSystem = grossSystem - payroll.overtimePay;
+  // Overtime is shown as its premium only ("התוספת"): the overtime hours themselves are paid at the plain
+  // rate and sit with the regular hours, so half an hour of overtime adds just the extra on that half hour.
+  const overtimePremium = payroll.overtimePay - payroll.overtimeBasePay;
+  const baseGrossSystem = grossSystem - overtimePremium;
   const baseGrossShown = overrides?.__gross ?? baseGrossSystem;
-  const overtimeShown = overrides?.__overtime ?? payroll.overtimePay;
+  const overtimeShown = overrides?.__overtime ?? overtimePremium;
   const grossShown = baseGrossShown + overtimeShown;
   const manualAdjust = grossShown - grossSystem;
   const mandatoryParts = [st.incomeTax > 0 && "מס הכנסה", st.nationalInsurance > 0 && "ביטוח לאומי", st.healthInsurance > 0 && "ביטוח בריאות"].filter(Boolean).join(" · ");
@@ -197,9 +211,9 @@ export default function DesignPreviewReports() {
   // Gross composition — follows the month day by day (accrued to date), full month once it's final.
   const breakdownSource = isCurrentMonth ? toDate : payroll;
   const breakdown: { label: string; amount: number; color: string }[] = [
-    { label: "שעות רגילות", amount: breakdownSource.regularPay + totalDeducted, color: "#7639FF" },
-    ...(totalDeducted > 0.5 ? [{ label: "קיזוז ימים ללא תשלום", amount: -totalDeducted, color: "#DC2626" }] : []),
-    { label: payoutNext ? "שעות נוספות מחודש קודם" : "שעות נוספות", amount: breakdownSource.overtimePay, color: "#00A8CC" },
+    { label: "שעות רגילות", amount: breakdownSource.regularPay + breakdownSource.overtimeBasePay + totalDeducted, color: "#7639FF" },
+    ...(totalDeducted > 0.5 ? [{ label: shortfallNext ? "הורדות מהחודש הקודם" : "קיזוז ימים ללא תשלום", amount: -totalDeducted, color: "#DC2626" }] : []),
+    { label: payoutNext ? "תוספת שעות נוספות מחודש קודם" : "תוספת שעות נוספות", amount: breakdownSource.overtimePay - breakdownSource.overtimeBasePay, color: "#00A8CC" },
     ...(breakdownSource.fixedComponentsTotal > 0.5 ? [{ label: "תוספות קבועות", amount: breakdownSource.fixedComponentsTotal, color: "#0F766E" }] : []),
     ...(breakdownSource.foodAllowanceAddition > 0.5 ? [{ label: "תקציב אוכל", amount: breakdownSource.foodAllowanceAddition, color: "#F59E0B" }] : []),
     ...(isFinal && Math.abs(manualAdjust) > 0.5 ? [{ label: "תיקון ידני", amount: manualAdjust, color: "#8892b0" }] : []),
@@ -233,7 +247,7 @@ export default function DesignPreviewReports() {
       return v.trim() === "" || Number.isNaN(n) ? fallback : Math.max(0, n);
     };
     const gg = num(edGross, baseGrossSystem);
-    const oo = num(edOvertime, payroll.overtimePay);
+    const oo = num(edOvertime, overtimePremium);
     const mm = num(edMandatory, mandatoryComputed);
     const pp = num(edProvident, providentComputed);
     const typedNet = parseFloat(edNet);
@@ -243,7 +257,7 @@ export default function DesignPreviewReports() {
     const kept: Record<string, number | undefined> = { ...(savedActual?.fieldOverrides || {}) };
     for (const k of ["__gross", "__overtime", "__mandatory", "__provident"]) delete kept[k];
     if (diff(gg, baseGrossSystem)) kept.__gross = gg;
-    if (diff(oo, payroll.overtimePay)) kept.__overtime = oo;
+    if (diff(oo, overtimePremium)) kept.__overtime = oo;
     if (diff(mm, mandatoryComputed)) kept.__mandatory = mm;
     if (diff(pp, providentComputed)) kept.__provident = pp;
     savePayrollActual({
@@ -432,7 +446,7 @@ export default function DesignPreviewReports() {
                       </span>
                       {[
                         { label: "ברוטו (ללא שעות נוספות)", value: edGross, set: setEdGross },
-                        { label: "שעות נוספות (₪)", value: edOvertime, set: setEdOvertime },
+                        { label: "תוספת שעות נוספות (₪)", value: edOvertime, set: setEdOvertime },
                         { label: "ניכויי חובה (סה״כ)", value: edMandatory, set: setEdMandatory },
                         { label: "קופות גמל ופנסיה (סה״כ)", value: edProvident, set: setEdProvident },
                         { label: "נטו בפועל (לא חובה)", value: edNet, set: setEdNet },
@@ -567,14 +581,14 @@ export default function DesignPreviewReports() {
           <div className={`lh-rise z-10 grid gap-3 ${payoutNext ? "grid-cols-2" : "grid-cols-1"}`} style={{ animationDelay: "130ms" }}>
             {[
               ...(payoutNext
-                ? [{ key: "prev", icon: "history", title: "שעות נוספות מחודש קודם", hours: payroll.overtimeHours, pay: payroll.overtimePay, note: "נכנסו לברוטו של החודש", accent: "#0E7490", tint: "#ECF7F9", line: "#CBE8EE" }]
+                ? [{ key: "prev", icon: "history", title: "שעות נוספות מחודש קודם", hours: payroll.overtimeHours, pay: overtimePremium, note: "נכנסו לברוטו של החודש", accent: "#0E7490", tint: "#ECF7F9", line: "#CBE8EE" }]
                 : []),
               {
                 key: "own",
                 icon: "more_time",
                 title: payoutNext ? "נצברו החודש" : "שעות נוספות החודש",
                 hours: payroll.ownOvertimeHours,
-                pay: payroll.ownOvertimePay,
+                pay: payroll.ownOvertimePay - payroll.ownOvertimeBasePay,
                 note: payoutNext ? "ישולמו בחודש הבא" : "כלולות בברוטו של החודש",
                 accent: "#6D5BD0",
                 tint: "#F3F1FC",
@@ -600,6 +614,51 @@ export default function DesignPreviewReports() {
             ))}
           </div>
 
+          {/* Month-behind shortfalls: what this month's missing hours and unpaid days will take off NEXT month's payslip,
+              and what last month's took off this one. Only for those who chose "הורדות מגולמות בשכר של חודש אחרי". */}
+          {shortfallNext && nextCarry && (
+            <div className="lh-rise z-10 grid grid-cols-2 gap-3" style={{ animationDelay: "135ms" }}>
+              {[
+                {
+                  key: "own",
+                  icon: "event_upcoming",
+                  title: "חוסר של החודש",
+                  hours: nextCarry.shortfallHours,
+                  days: nextCarry.vacation.deductedDays + nextCarry.sick.deductedDays,
+                  pay: nextCarry.shortfallPay + nextCarry.leaveDeductedTotal,
+                  note: isCurrentMonth && !isPastMonth ? "עד כה, יירד בתלוש של החודש הבא" : "יורד בתלוש של החודש הבא",
+                },
+                {
+                  key: "prev",
+                  icon: "history",
+                  title: "חוסר של החודש הקודם",
+                  hours: carry.shortfallHours,
+                  days: carry.vacation.deductedDays + carry.sick.deductedDays,
+                  pay: carry.shortfallPay + carry.leaveDeductedTotal,
+                  note: "ירד בתלוש של החודש הזה",
+                },
+              ].map((c) => (
+                <div key={c.key} className="rounded-[24px] p-4 flex flex-col" style={{ background: "#FBF1F0", border: "1px solid #F1D5D2" }}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: "#fff", boxShadow: "0 4px 10px -4px #B3463D55" }}>
+                      <span className="material-symbols-outlined text-[17px]" style={{ color: "#B3463D" }}>{c.icon}</span>
+                    </div>
+                    <span className="text-[11.5px] font-bold leading-tight" style={{ color: LH.onSurface }}>{c.title}</span>
+                  </div>
+                  <div className="flex items-baseline gap-1.5">
+                    <span dir="ltr" className="tabular-nums leading-none" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 26, fontWeight: 700, color: LH.onSurface, letterSpacing: "-0.03em" }}>
+                      {formatHM(c.hours)}
+                    </span>
+                    <span className="text-[11px] font-semibold" style={{ color: "#8892b0" }}>שעות</span>
+                  </div>
+                  {c.days > 0.01 && <span className="text-[11px] font-semibold mt-1.5" style={{ color: LH.onSurfaceVariant }}>ועוד {c.days.toFixed(1)} ימי חופש/מחלה</span>}
+                  <span dir="ltr" className="tabular-nums text-[15px] font-bold mt-2" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color: "#B3463D" }}>−{money(c.pay)}</span>
+                  <span className="text-[10.5px] font-medium mt-1" style={{ color: "#8892b0" }}>{c.note}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* How the final net is built — only once the month is final: gross + overtime − mandatory
               deductions − pension/provident = the approved net. Totals only, with what each is made of. */}
           {isFinal && (
@@ -610,8 +669,8 @@ export default function DesignPreviewReports() {
               </div>
               {[
                 { label: "ברוטו", sub: "שכר מלא לפי הלוח, תוספות ותקציב אוכל", amount: baseGrossShown + totalDeducted, sign: "+", color: LH.onSurface },
-                ...(totalDeducted > 0.5 ? [{ label: "קיזוז ימים ללא תשלום", sub: "חופש/מחלה שלא כוסו מהיתרה", amount: totalDeducted, sign: "−", color: "#DC2626" }] : []),
-                { label: "שעות נוספות", sub: payoutNext ? "מהחודש הקודם" : "מהחודש הזה", amount: overtimeShown, sign: "+", color: "#00A8CC" },
+                ...(totalDeducted > 0.5 ? [{ label: shortfallNext ? "הורדות מהחודש הקודם" : "קיזוז ימים ללא תשלום", sub: shortfallNext ? "חוסר שעות וימים ללא תשלום, בניכוי מה שנצבר" : "חופש/מחלה שלא כוסו מהיתרה", amount: totalDeducted, sign: "−", color: "#DC2626" }] : []),
+                { label: "תוספת שעות נוספות", sub: payoutNext ? "מהחודש הקודם" : "מהחודש הזה", amount: overtimeShown, sign: "+", color: "#00A8CC" },
                 { label: "ניכויי חובה", sub: mandatoryParts || "—", amount: mandatoryShown, sign: "−", color: "#DC2626" },
                 { label: "קופות גמל ופנסיה", sub: providentParts || "לא מוגדר", amount: providentShown, sign: "−", color: "#DC2626" },
                 ...(otherDeductions > 0.5 ? [{ label: "ניכויים נוספים", sub: "לפי ההגדרות שלך", amount: otherDeductions, sign: "−", color: "#DC2626" }] : []),
@@ -635,7 +694,7 @@ export default function DesignPreviewReports() {
           )}
 
           {/* Vacation/sick days the balance couldn't cover — the one thing that reduces the gross itself */}
-          {deductions.length > 0 && (
+          {(leaveItems.length > 0 || shortfallCut > 0.5) && (
             <div
               className="lh-rise rounded-[28px] p-6 relative overflow-hidden z-10"
               style={{ animationDelay: "150ms", background: "linear-gradient(165deg, rgba(24,20,34,0.97), rgba(48,20,28,0.96))", boxShadow: "0 20px 50px -12px rgba(220,38,38,0.28)" }}
@@ -648,38 +707,53 @@ export default function DesignPreviewReports() {
                   <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "rgba(255,255,255,0.1)" }}>
                     <span className="material-symbols-outlined text-[18px]" style={{ color: "#F87171" }}>receipt_long</span>
                   </div>
-                  <span className="text-[13px] font-extrabold tracking-[0.1em] uppercase" style={{ color: "rgba(255,255,255,0.75)" }}>קיזוזים בשכר</span>
+                  <span className="text-[13px] font-extrabold tracking-[0.1em] uppercase" style={{ color: "rgba(255,255,255,0.75)" }}>{shortfallNext ? "הורדות מהחודש הקודם" : "קיזוזים בשכר"}</span>
                 </div>
                 <span dir="ltr" className="block leading-none" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 26, fontWeight: 800, color: "#fff" }}>
                   −{money(totalDeducted)}
                 </span>
               </div>
 
-              <div className={`grid gap-2.5 relative z-10 mb-5 ${vacationDeductions.length > 0 && sickDeductions.length > 0 ? "grid-cols-2" : "grid-cols-1"}`}>
+              <div className={`grid gap-2.5 relative z-10 mb-5 ${(vacationDeductions.length > 0 ? 1 : 0) + (sickDeductions.length > 0 ? 1 : 0) + (shortfallCut > 0.5 ? 1 : 0) > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
                 {vacationDeductions.length > 0 && (
                   <div className="rounded-2xl p-3.5" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}>
                     <div className="flex items-center gap-1.5 mb-1.5">
                       <span className="material-symbols-outlined text-[15px]" style={{ color: "#60A5FA" }}>beach_access</span>
-                      <span className="text-[10.5px] font-bold" style={{ color: "rgba(255,255,255,0.6)" }}>חריגת חופש · {vacationDeductions.length} ימים</span>
+                      <span className="text-[10.5px] font-bold" style={{ color: "rgba(255,255,255,0.6)" }}>חריגת חופש · {shortfallNext ? carry.vacation.deductedDays.toFixed(1) : vacationDeductions.length} ימים</span>
                     </div>
                     <span dir="ltr" className="block" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 18, fontWeight: 700, color: "#93C5FD" }}>−{money(vacationTotal)}</span>
+                    {shortfallNext && carry.vacation.coveredDays > 0.01 && (
+                      <span className="block text-[10.5px] mt-1" style={{ color: "rgba(255,255,255,0.5)" }}>{carry.vacation.coveredDays.toFixed(1)} מתוך {carry.vacation.unpaidDays.toFixed(1)} כוסו מהצבירה</span>
+                    )}
                   </div>
                 )}
                 {sickDeductions.length > 0 && (
                   <div className="rounded-2xl p-3.5" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}>
                     <div className="flex items-center gap-1.5 mb-1.5">
                       <span className="material-symbols-outlined text-[15px]" style={{ color: "#FBBF24" }}>thermostat</span>
-                      <span className="text-[10.5px] font-bold" style={{ color: "rgba(255,255,255,0.6)" }}>חריגת מחלה · {sickDeductions.length} ימים</span>
+                      <span className="text-[10.5px] font-bold" style={{ color: "rgba(255,255,255,0.6)" }}>חריגת מחלה · {shortfallNext ? carry.sick.deductedDays.toFixed(1) : sickDeductions.length} ימים</span>
                     </div>
                     <span dir="ltr" className="block" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 18, fontWeight: 700, color: "#FCD34D" }}>−{money(sickTotal)}</span>
+                    {shortfallNext && carry.sick.coveredDays > 0.01 && (
+                      <span className="block text-[10.5px] mt-1" style={{ color: "rgba(255,255,255,0.5)" }}>{carry.sick.coveredDays.toFixed(1)} מתוך {carry.sick.unpaidDays.toFixed(1)} כוסו מהצבירה</span>
+                    )}
+                  </div>
+                )}
+                {shortfallCut > 0.5 && (
+                  <div className="rounded-2xl p-3.5" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <span className="material-symbols-outlined text-[15px]" style={{ color: "#F87171" }}>schedule</span>
+                      <span className="text-[10.5px] font-bold" style={{ color: "rgba(255,255,255,0.6)" }}>חוסר שעות · {formatHM(carry.shortfallHours)}</span>
+                    </div>
+                    <span dir="ltr" className="block" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 18, fontWeight: 700, color: "#FCA5A5" }}>−{money(shortfallCut)}</span>
                   </div>
                 )}
               </div>
 
               <div className="flex flex-col relative z-10">
-                {deductions.map((d, i) => {
+                {leaveItems.map((d, i) => {
                   const color = d.type === "vacation" ? "#60A5FA" : "#FBBF24";
-                  const isLast = i === deductions.length - 1;
+                  const isLast = i === leaveItems.length - 1;
                   return (
                     <div key={`${d.date}-${d.type}`} className="flex gap-3">
                       <div className="flex flex-col items-center pt-1.5 shrink-0">

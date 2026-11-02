@@ -88,7 +88,7 @@ export default function DesignPreviewSchedule() {
           </section>
 
           <section className="lh-rise mb-10 relative z-10" style={{ animationDelay: "60ms" }}>
-            <div className="rounded-[24px] p-6 relative overflow-hidden transition-all duration-500" style={{ background: `${LH.surface}E6`, backdropFilter: "blur(30px)", boxShadow: "0 16px 45px rgba(35,50,100,0.07)" }}>
+            <div className="rounded-[24px] p-6 relative overflow-hidden transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-500" style={{ background: `${LH.surface}E6`, backdropFilter: "blur(30px)", boxShadow: "0 16px 45px rgba(35,50,100,0.07)" }}>
               <div className="flex justify-between items-center mb-6">
                 <button
                   onClick={() => setCurrentMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
@@ -109,7 +109,7 @@ export default function DesignPreviewSchedule() {
 
               <div className="grid grid-cols-7 gap-y-4 mb-2">
                 {weekdays.map((d) => (
-                  <div key={d} className="text-center text-[12px] font-bold tracking-[0.08em]" style={{ color: LH.onSurfaceVariant }}>{d}</div>
+                  <div key={d} className="text-center text-[12px] font-bold" style={{ color: LH.onSurfaceVariant }}>{d}</div>
                 ))}
               </div>
 
@@ -201,24 +201,24 @@ export default function DesignPreviewSchedule() {
                 {(Object.keys(STATUS_META) as DayStatus[]).map((st) => (
                   <div key={st} className="flex items-center gap-1.5">
                     <div className="w-2 h-2 rounded-full" style={{ background: STATUS_META[st].grad[0] }} />
-                    <span className="text-[11px] font-bold tracking-[0.05em]" style={{ color: LH.onSurfaceVariant }}>{STATUS_META[st].label}</span>
+                    <span className="text-[11px] font-bold" style={{ color: LH.onSurfaceVariant }}>{STATUS_META[st].label}</span>
                   </div>
                 ))}
                 <div className="flex items-center gap-1.5">
                   <div className="w-2 h-2 rounded-full" style={{ background: "linear-gradient(155deg, #7639FF, #00D2FF)" }} />
-                  <span className="text-[11px] font-bold tracking-[0.05em]" style={{ color: LH.onSurfaceVariant }}>יום מגוון</span>
+                  <span className="text-[11px] font-bold" style={{ color: LH.onSurfaceVariant }}>יום מגוון</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <div className="w-2 h-2 rounded-full" style={{ background: LH.secondary }} />
-                  <span className="text-[11px] font-bold tracking-[0.05em]" style={{ color: LH.onSurfaceVariant }}>משמרת ערב</span>
+                  <span className="text-[11px] font-bold" style={{ color: LH.onSurfaceVariant }}>משמרת ערב</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <div className="w-2 h-2 rounded-full" style={{ background: LH.tertiaryContainer }} />
-                  <span className="text-[11px] font-bold tracking-[0.05em]" style={{ color: LH.onSurfaceVariant }}>הערה</span>
+                  <span className="text-[11px] font-bold" style={{ color: LH.onSurfaceVariant }}>הערה</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <div className="w-2 h-2 rounded-full" style={{ background: "#DC2626" }} />
-                  <span className="text-[11px] font-bold tracking-[0.05em]" style={{ color: LH.onSurfaceVariant }}>קיזוז בשכר</span>
+                  <span className="text-[11px] font-bold" style={{ color: LH.onSurfaceVariant }}>קיזוז בשכר</span>
                 </div>
               </div>
             </div>

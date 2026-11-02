@@ -126,7 +126,7 @@ export function ClockInEditModal({ open, date, entry, onClose, onSaved }: ClockI
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
               />
             </div>
-            <span className="text-[11px] font-bold uppercase tracking-[0.14em] relative z-10 mb-6" style={{ color: "#B0B7C9" }}>הקש כדי לשנות</span>
+            <span className="text-[11px] font-bold relative z-10 mb-6" style={{ color: "#B0B7C9" }}>הקש כדי לשנות</span>
 
             <button
               onClick={save}

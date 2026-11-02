@@ -307,7 +307,7 @@ export default function DesignPreviewChat() {
               </h1>
               <div className="flex items-center gap-1.5 mt-1">
                 <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#19CEA0" }} />
-                <span className="text-[11px] font-bold tracking-[0.06em]" style={{ color: LH.onSurfaceVariant }}>נתונים מקומיים · מחובר ל-AI</span>
+                <span className="text-[11px] font-bold" style={{ color: LH.onSurfaceVariant }}>נתונים מקומיים · מחובר ל-AI</span>
               </div>
             </div>
           </div>
@@ -367,7 +367,7 @@ export default function DesignPreviewChat() {
 
           {messages.length <= 1 && (
             <div className="flex flex-col gap-2 mt-5">
-              <span className="text-[11px] font-bold tracking-[0.08em] px-1" style={{ color: LH.onSurfaceVariant }}>שאלות מהירות</span>
+              <span className="text-[11px] font-bold px-1" style={{ color: LH.onSurfaceVariant }}>שאלות מהירות</span>
               <div className="flex flex-wrap gap-2">
                 {quickQuestions.map((q) => (
                   <button
@@ -403,7 +403,7 @@ export default function DesignPreviewChat() {
           <button
             onClick={() => send(input)}
             disabled={!input.trim()}
-            className="lh-send w-11 h-11 rounded-full flex items-center justify-center shrink-0 disabled:opacity-40 transition-transform duration-150"
+            className="lh-send w-11 h-11 rounded-full flex items-center justify-center shrink-0 disabled:opacity-40 transition-transform duration-150 motion-reduce:transition-none"
             style={{ background: "linear-gradient(155deg,#7639FF,#00D2FF,#19CEA0)", boxShadow: input.trim() ? "0 10px 22px -8px rgba(118,57,255,0.6)" : "none" }}
           >
             <span className="material-symbols-outlined text-white text-[20px]" style={{ transform: "scaleX(-1)" }}>send</span>

@@ -219,6 +219,13 @@ export interface UserSettings {
    * includes the PREVIOUS month's instead.
    */
   overtime_payout_month?: "current" | "next";
+  /**
+   * "current" (default) = a month's missing hours and unpaid vacation/sick days cut that same month's
+   * pay. "next" = the cut is baked into the following month's payslip instead (same idea as
+   * overtime_payout_month), and the unpaid leave days applied then are reduced by the vacation/sick
+   * days that accrued in between.
+   */
+  shortfall_payout_month?: "current" | "next";
   /** Fixed monthly additions (e.g. travel allowance) added to every month's payroll report. */
   fixed_components?: PayLineItem[];
   /**
@@ -458,6 +465,7 @@ const defaultSettings: UserSettings = {
   ],
   overtime_round_hours: false,
   overtime_payout_month: "current",
+  shortfall_payout_month: "current",
   fixed_components: [],
   fixed_components_in_gross: true,
   deductions: [],
@@ -530,6 +538,7 @@ const safeParseUserData = (raw: string | null): LocalDataShape => {
         overtime_tiers: Array.isArray(parsed.settings?.overtime_tiers) ? parsed.settings.overtime_tiers : defaultSettings.overtime_tiers,
         overtime_round_hours: parsed.settings?.overtime_round_hours ?? defaultSettings.overtime_round_hours,
         overtime_payout_month: parsed.settings?.overtime_payout_month ?? defaultSettings.overtime_payout_month,
+        shortfall_payout_month: parsed.settings?.shortfall_payout_month ?? defaultSettings.shortfall_payout_month,
         fixed_components: Array.isArray(parsed.settings?.fixed_components) ? parsed.settings.fixed_components : defaultSettings.fixed_components,
         fixed_components_in_gross: parsed.settings?.fixed_components_in_gross ?? defaultSettings.fixed_components_in_gross,
         deductions: Array.isArray(parsed.settings?.deductions) ? parsed.settings.deductions : defaultSettings.deductions,
@@ -851,6 +860,15 @@ export const computeLeaveUsage = (year: number, type: "vacation" | "sick", setti
       }
     }
   }
+  // Month-behind shortfalls: the days the following month's accrual covers (instead of being deducted from
+  // pay) are consumed from that month's balance, so they can't be spent a second time.
+  if (settings.shortfall_payout_month === "next") {
+    for (let m = 0; m < 12; m++) {
+      if (new Date(year, m, 1) > asOfDate) break;
+      const prev = new Date(year, m - 1, 1);
+      used += leaveCarryOfMonth(prev.getFullYear(), prev.getMonth(), type, settings).coveredDays;
+    }
+  }
   return used;
 };
 
@@ -1138,6 +1156,15 @@ export interface MonthlyPayroll {
    * payslip it's paid on — always accurate for "hours accrued this month" indicators. */
   ownOvertimeHours: number;
   ownOvertimePay: number;
+  /** Base-rate value of the counted overtime hours / of this month's own overtime hours. */
+  overtimeBasePay: number;
+  ownOvertimeBasePay: number;
+  /** This month's own missing hours / unpaid-leave cut, and what lands here from LAST month when shortfall_payout_month is "next". */
+  shortfallOwnHours: number;
+  shortfallOwnPay: number;
+  unpaidLeaveOwnPay: number;
+  shortfallCarry: ShortfallCarry;
+  shortfallMode: "current" | "next";
   fixedComponentsTotal: number;
   deductionsTotal: number;
   netPay: number;
@@ -1172,6 +1199,11 @@ interface RawMonthPay {
   overtimeHours: number;
   regularPay: number;
   overtimePay: number;
+  /** What the overtime hours would have paid at the plain base rate; overtimePay minus this is the premium alone. */
+  overtimeBasePay: number;
+  /** Hours short of the daily target on finished plain work days (leave-covered shortfalls excluded) and what they cost at the base rate. */
+  shortfallHours: number;
+  shortfallPay: number;
   daysWorked: number;
   unpaidLeaveDays: number;
   unpaidOffDays: number;
@@ -1193,6 +1225,10 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
   let overtimeHours = 0;
   let regularPay = 0;
   let overtimePay = 0;
+  let overtimeBasePay = 0;
+  let shortfallHours = 0;
+  const nowForShortfall = new Date();
+  const todayKeyForShortfall = `${nowForShortfall.getFullYear()}-${String(nowForShortfall.getMonth() + 1).padStart(2, "0")}-${String(nowForShortfall.getDate()).padStart(2, "0")}`;
   let daysWorked = 0;
   let unpaidLeaveDays = 0;
   let unpaidOffDays = 0;
@@ -1240,6 +1276,7 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
           overtimeHours += dayOvertime;
           regularPay += dayRegularPay;
           overtimePay += dayOvertimePay;
+          overtimeBasePay += dayOvertime * baseRate;
           perDay.push({ date: w.date, regularHours: dayRegular, overtimeHours: dayOvertime, regularPay: dayRegularPay, overtimePay: dayOvertimePay });
         } else {
           dayPaidHours += workedHoursTotal;
@@ -1302,16 +1339,88 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
     const dayRegular = worked - dayOvertime;
     const dayRegularPay = dayRegular * baseRate;
     const dayOvertimePay = computeOvertimePay(dayOvertime, baseRate, settings.overtime_tiers);
+    // A finished day that fell short of its target (and wasn't covered by vacation/sick) is a shortfall.
+    if ((w.end_time || w.date < todayKeyForShortfall) && w.deficitCoveredBy === undefined && target > worked) shortfallHours += target - worked;
 
     regularHours += dayRegular;
     overtimeHours += dayOvertime;
     regularPay += dayRegularPay;
     overtimePay += dayOvertimePay;
+    overtimeBasePay += dayOvertime * baseRate;
     daysWorked += 1;
     perDay.push({ date: w.date, regularHours: dayRegular, overtimeHours: dayOvertime, regularPay: dayRegularPay, overtimePay: dayOvertimePay });
   }
 
-  return { regularHours, overtimeHours, regularPay, overtimePay, daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay };
+  return { regularHours, overtimeHours, regularPay, overtimePay, overtimeBasePay, shortfallHours, shortfallPay: shortfallHours * baseRate, daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay };
+};
+
+/** Unpaid vacation/sick days taken in one month, as settled on the NEXT month's payslip. */
+export interface LeaveCarry {
+  /** Unpaid days that month had. */
+  unpaidDays: number;
+  /** Days of those that the vacation/sick days accrued in between cover (so they are not deducted). */
+  coveredDays: number;
+  /** Days that actually come off the next payslip. */
+  deductedDays: number;
+  /** ₪ the unpaid days would have cost in their own month. */
+  unpaidAmount: number;
+  /** ₪ that actually comes off the next payslip. */
+  deductedAmount: number;
+}
+
+export interface ShortfallCarry {
+  shortfallHours: number;
+  shortfallPay: number;
+  vacation: LeaveCarry;
+  sick: LeaveCarry;
+  /** Vacation + sick ₪ that come off this month's payslip from last month. */
+  leaveDeductedTotal: number;
+}
+
+const EMPTY_LEAVE_CARRY: LeaveCarry = { unpaidDays: 0, coveredDays: 0, deductedDays: 0, unpaidAmount: 0, deductedAmount: 0 };
+const EMPTY_SHORTFALL_CARRY: ShortfallCarry = { shortfallHours: 0, shortfallPay: 0, vacation: EMPTY_LEAVE_CARRY, sick: EMPTY_LEAVE_CARRY, leaveDeductedTotal: 0 };
+
+/** Days of this leave type that accrue in one calendar month (0 for a lump-sum accrual: nothing new arrives in between). */
+const monthlyAccrualDays = (type: "vacation" | "sick", settings: UserSettings): number => {
+  const annual = type === "vacation" ? settings.annual_vacation_days || 0 : settings.annual_sick_days || 0;
+  const method = type === "vacation" ? settings.vacation_accrual_method : settings.sick_accrual_method;
+  return method === "monthly" ? annual / 12 : 0;
+};
+
+/** The unpaid days of (year, month) of one type, net of what the following month's accrual covers. */
+const leaveCarryOfMonth = (year: number, month: number, type: "vacation" | "sick", settings: UserSettings): LeaveCarry => {
+  const items = computeUnpaidLeaveDeductions(year, month, settings).filter((d) => d.type === type);
+  if (items.length === 0) return EMPTY_LEAVE_CARRY;
+  const unpaidDays = items.reduce((sum, d) => sum + d.unpaidDays, 0);
+  const unpaidAmount = items.reduce((sum, d) => sum + d.amount, 0);
+  const deductedDays = Math.max(0, unpaidDays - monthlyAccrualDays(type, settings));
+  const ratio = unpaidDays > 0 ? deductedDays / unpaidDays : 0;
+  return { unpaidDays, coveredDays: unpaidDays - deductedDays, deductedDays, unpaidAmount, deductedAmount: unpaidAmount * ratio };
+};
+
+/** What lands on (year, month)'s payslip from the previous month. All zeros unless shortfall_payout_month is "next". */
+export const computeShortfallCarry = (year: number, month: number, settings: UserSettings): ShortfallCarry => {
+  if (settings.shortfall_payout_month !== "next") return EMPTY_SHORTFALL_CARRY;
+  const prev = new Date(year, month - 1, 1);
+  const py = prev.getFullYear();
+  const pm = prev.getMonth();
+  const prevRaw = computeRawMonthPay(py, pm, settings);
+  const vacation = leaveCarryOfMonth(py, pm, "vacation", settings);
+  const sick = leaveCarryOfMonth(py, pm, "sick", settings);
+  return { shortfallHours: prevRaw.shortfallHours, shortfallPay: prevRaw.shortfallPay, vacation, sick, leaveDeductedTotal: vacation.deductedAmount + sick.deductedAmount };
+};
+
+/**
+ * Month-behind shortfalls: this month's own missing hours and unpaid leave are added back to its regular
+ * pay (they come off next month instead), and last month's come off now. Regular pay is untouched when
+ * the setting is off.
+ */
+const applyShortfallMode = (year: number, month: number, settings: UserSettings, raw: RawMonthPay) => {
+  const mode: "current" | "next" = settings.shortfall_payout_month === "next" ? "next" : "current";
+  const unpaidLeaveOwnPay = computeUnpaidLeaveDeductions(year, month, settings).reduce((sum, d) => sum + d.amount, 0);
+  const carry = computeShortfallCarry(year, month, settings);
+  const regularPay = mode === "next" ? raw.regularPay + raw.shortfallPay + unpaidLeaveOwnPay - carry.shortfallPay - carry.leaveDeductedTotal : raw.regularPay;
+  return { mode, carry, unpaidLeaveOwnPay, regularPay };
 };
 
 /** Gross pay one single day earned (regular + overtime), using exactly the same per-day accounting
@@ -1324,8 +1433,10 @@ export const computeDayPay = (w: WorkHour, settings: UserSettings): { pay: numbe
 
 export const computeMonthlyPayroll = (year: number, month: number, settings: UserSettings, entriesOverride?: WorkHour[]): MonthlyPayroll => {
   const raw = computeRawMonthPay(year, month, settings, entriesOverride);
-  const { daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay, regularHours, regularPay } = raw;
-  let { overtimeHours, overtimePay } = raw;
+  const { daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay, regularHours } = raw;
+  const sf = applyShortfallMode(year, month, settings, raw);
+  const regularPay = sf.regularPay;
+  let { overtimeHours, overtimePay, overtimeBasePay } = raw;
 
   // Some workplaces pay overtime worked in month N on the payslip for month N+1 instead of N's
   // own payslip — this month's own overtime moves out (it'll count next month instead), and last
@@ -1335,6 +1446,7 @@ export const computeMonthlyPayroll = (year: number, month: number, settings: Use
     const prevRaw = computeRawMonthPay(prevMonthDate.getFullYear(), prevMonthDate.getMonth(), settings);
     overtimeHours = prevRaw.overtimeHours;
     overtimePay = prevRaw.overtimePay;
+    overtimeBasePay = prevRaw.overtimeBasePay;
   }
 
   const fixedComponentsTotal = (settings.fixed_components || []).reduce((s, c) => s + (c.amount || 0), 0);
@@ -1385,6 +1497,13 @@ export const computeMonthlyPayroll = (year: number, month: number, settings: Use
     overtimePay,
     ownOvertimeHours: raw.overtimeHours,
     ownOvertimePay: raw.overtimePay,
+    overtimeBasePay,
+    ownOvertimeBasePay: raw.overtimeBasePay,
+    shortfallOwnHours: raw.shortfallHours,
+    shortfallOwnPay: raw.shortfallPay,
+    unpaidLeaveOwnPay: sf.unpaidLeaveOwnPay,
+    shortfallCarry: sf.carry,
+    shortfallMode: sf.mode,
     fixedComponentsTotal,
     deductionsTotal,
     netPay,
@@ -1412,16 +1531,20 @@ export const computeMonthlyPayroll = (year: number, month: number, settings: Use
  */
 export const computeCurrentMonthToDatePayroll = (year: number, month: number, settings: UserSettings): MonthlyPayroll => {
   const raw = computeRawMonthPay(year, month, settings);
-  const { regularHours, regularPay, daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay } = raw;
+  const { regularHours, daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay } = raw;
+  const sf = applyShortfallMode(year, month, settings, raw);
+  const regularPay = sf.regularPay;
   // Same overtime-payout rule as the full-month payroll: with a month-behind payout, the overtime that
   // counts toward THIS month is last month's, not what is being worked right now.
   let overtimeHours = raw.overtimeHours;
   let overtimePay = raw.overtimePay;
+  let overtimeBasePay = raw.overtimeBasePay;
   if (settings.overtime_payout_month === "next") {
     const prev = new Date(year, month - 1, 1);
     const prevRaw = computeRawMonthPay(prev.getFullYear(), prev.getMonth(), settings);
     overtimeHours = prevRaw.overtimeHours;
     overtimePay = prevRaw.overtimePay;
+    overtimeBasePay = prevRaw.overtimeBasePay;
   }
 
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -1485,6 +1608,13 @@ export const computeCurrentMonthToDatePayroll = (year: number, month: number, se
     overtimePay,
     ownOvertimeHours: raw.overtimeHours,
     ownOvertimePay: raw.overtimePay,
+    overtimeBasePay,
+    ownOvertimeBasePay: raw.overtimeBasePay,
+    shortfallOwnHours: raw.shortfallHours,
+    shortfallOwnPay: raw.shortfallPay,
+    unpaidLeaveOwnPay: sf.unpaidLeaveOwnPay,
+    shortfallCarry: sf.carry,
+    shortfallMode: sf.mode,
     fixedComponentsTotal,
     deductionsTotal,
     netPay,

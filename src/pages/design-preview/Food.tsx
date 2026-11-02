@@ -393,7 +393,7 @@ export default function DesignPreviewFood() {
                     <span className="relative z-10 text-white font-extrabold leading-none" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 38, letterSpacing: "-0.03em", marginTop: 8 }}>
                       {money(Math.max(0, summary.remaining))}
                     </span>
-                    <span className="relative z-10 text-white text-[11px] font-bold uppercase tracking-wider mt-1.5">נותר החודש</span>
+                    <span className="relative z-10 text-white text-[11px] font-bold mt-1.5">נותר החודש</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 px-5 py-2.5 rounded-full" style={{ background: `${grad[0]}14` }}>

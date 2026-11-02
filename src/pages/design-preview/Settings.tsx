@@ -504,6 +504,10 @@ export default function DesignPreviewSettings() {
     if (!settings) return;
     persist({ ...settings, overtime_payout_month: v });
   };
+  const setShortfallPayoutMonth = (v: "current" | "next") => {
+    if (!settings) return;
+    persist({ ...settings, shortfall_payout_month: v });
+  };
 
   const openCholHamoedDialog = () => {
     if (!settings) return;
@@ -638,7 +642,7 @@ export default function DesignPreviewSettings() {
               <p className="text-[16px] leading-6 mt-1" style={{ color: LH.onSurfaceVariant }}>WorkTrack</p>
             </div>
             <button
-              className="z-10 mt-2 px-6 py-2 rounded-full font-medium shadow-sm hover:shadow-md transition-all duration-300 flex items-center gap-2"
+              className="z-10 mt-2 px-6 py-2 rounded-full font-medium shadow-sm hover:shadow-md transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-300 flex items-center gap-2"
               style={{ background: LH.surfaceBright, color: LH.primary }}
               onClick={openNameDialog}
             >
@@ -854,6 +858,18 @@ export default function DesignPreviewSettings() {
                 onChange={(v) => setOvertimePayoutMonth(v ? "next" : "current")}
               />
             )}
+            {settings.overtime_calc_enabled && (
+              <ToggleRow
+                title="הורדות מגולמות בשכר של חודש אחרי"
+                value={
+                  settings.shortfall_payout_month === "next"
+                    ? "פעיל: חוסר שעות וימים ללא תשלום יורדים בתלוש של החודש הבא, ובניכוי מה שנצבר בינתיים"
+                    : "כבוי: חוסרים יורדים באותו חודש שבו נוצרו"
+                }
+                on={settings.shortfall_payout_month === "next"}
+                onChange={(v) => setShortfallPayoutMonth(v ? "next" : "current")}
+              />
+            )}
             <Row
               title="חול המועד"
               value={
@@ -1034,14 +1050,14 @@ export default function DesignPreviewSettings() {
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => setSalaryModeDraft("hourly")}
-                  className="h-11 rounded-xl font-bold text-[13px] transition-all"
+                  className="h-11 rounded-xl font-bold text-[13px] transition-[color,background-color,border-color,box-shadow,opacity,transform]"
                   style={salaryModeDraft === "hourly" ? { background: LH.primary, color: "#fff" } : { background: LH.surfaceContainer, color: LH.onSurfaceVariant }}
                 >
                   שכר שעתי
                 </button>
                 <button
                   onClick={() => setSalaryModeDraft("cap")}
-                  className="h-11 rounded-xl font-bold text-[13px] transition-all"
+                  className="h-11 rounded-xl font-bold text-[13px] transition-[color,background-color,border-color,box-shadow,opacity,transform]"
                   style={salaryModeDraft === "cap" ? { background: LH.primary, color: "#fff" } : { background: LH.surfaceContainer, color: LH.onSurfaceVariant }}
                 >
                   תקרת שכר
@@ -1570,14 +1586,14 @@ export default function DesignPreviewSettings() {
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => setFoodHasCardDraft(true)}
-                  className="h-11 rounded-xl font-bold text-[13px] transition-all"
+                  className="h-11 rounded-xl font-bold text-[13px] transition-[color,background-color,border-color,box-shadow,opacity,transform]"
                   style={foodHasCardDraft ? { background: LH.primary, color: "#fff" } : { background: LH.surfaceContainer, color: LH.onSurfaceVariant }}
                 >
                   כרטיס אוכל
                 </button>
                 <button
                   onClick={() => setFoodHasCardDraft(false)}
-                  className="h-11 rounded-xl font-bold text-[13px] transition-all"
+                  className="h-11 rounded-xl font-bold text-[13px] transition-[color,background-color,border-color,box-shadow,opacity,transform]"
                   style={!foodHasCardDraft ? { background: LH.primary, color: "#fff" } : { background: LH.surfaceContainer, color: LH.onSurfaceVariant }}
                 >
                   מגולם בשכר
@@ -1713,16 +1729,16 @@ export default function DesignPreviewSettings() {
                 ) : (
                   <>
                     <div className="rounded-2xl p-5" style={{ background: LH.primary }}>
-                      <span className="text-[10.5px] font-bold uppercase tracking-[0.08em] block mb-1" style={{ color: "rgba(255,255,255,0.65)" }}>סה״כ נטו לשנה</span>
+                      <span className="text-[10.5px] font-bold block mb-1" style={{ color: "rgba(255,255,255,0.65)" }}>סה״כ נטו לשנה</span>
                       <span dir="ltr" className="tabular-nums block" style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 28, fontWeight: 800, color: "#fff" }}>₪{Math.round(totalNet).toLocaleString("he-IL")}</span>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="rounded-2xl p-4" style={{ background: LH.surfaceContainerLow }}>
-                        <span className="text-[10px] font-bold uppercase tracking-[0.08em] block mb-1" style={{ color: LH.onSurfaceVariant }}>סה״כ ברוטו</span>
+                        <span className="text-[10px] font-bold block mb-1" style={{ color: LH.onSurfaceVariant }}>סה״כ ברוטו</span>
                         <span dir="ltr" className="tabular-nums block" style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 17, fontWeight: 800, color: LH.onSurface }}>₪{Math.round(totalGross).toLocaleString("he-IL")}</span>
                       </div>
                       <div className="rounded-2xl p-4" style={{ background: "rgba(220,38,38,0.06)" }}>
-                        <span className="text-[10px] font-bold uppercase tracking-[0.08em] block mb-1" style={{ color: "#DC2626" }}>סה״כ ניכויים</span>
+                        <span className="text-[10px] font-bold block mb-1" style={{ color: "#DC2626" }}>סה״כ ניכויים</span>
                         <span dir="ltr" className="tabular-nums block" style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 17, fontWeight: 800, color: "#DC2626" }}>₪{Math.round(totalDeductions).toLocaleString("he-IL")}</span>
                       </div>
                     </div>

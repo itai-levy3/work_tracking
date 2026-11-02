@@ -45,7 +45,7 @@ export function LHLoadingScreen() {
       <div className="w-48 h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(35,50,100,0.08)" }}>
         <div className="lh-loading-bar h-full rounded-full" style={{ background: "linear-gradient(90deg,#7639FF,#00D2FF)" }} />
       </div>
-      <span className="text-[11.5px] font-bold tracking-[0.1em] uppercase" style={{ color: "#8892b0" }}>טוען נתונים...</span>
+      <span className="text-[11.5px] font-bold" style={{ color: "#8892b0" }}>טוען נתונים...</span>
     </div>
   );
 }
@@ -93,7 +93,7 @@ export function LHBottomNav({ active, foodEnabled = true }: { active: "settings"
               <Link
                 key={item.path}
                 to={item.path}
-                className="flex flex-col items-center justify-center w-14 h-14 rounded-[18px] transition-all duration-300 bg-white border border-white shrink-0"
+                className="flex flex-col items-center justify-center w-14 h-14 rounded-[18px] transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-300 bg-white border border-white shrink-0"
                 style={{ transform: "translateY(-14px)", boxShadow: active === "home" ? "0 12px 32px rgba(118,57,255,0.15)" : "0 8px 20px rgba(0,1,20,0.15)" }}
               >
                 <span
@@ -120,7 +120,7 @@ export function LHBottomNav({ active, foodEnabled = true }: { active: "settings"
             <Link
               key={item.path}
               to={item.path}
-              className="flex flex-col items-center justify-center w-11 h-11 rounded-full transition-all duration-300 shrink-0"
+              className="flex flex-col items-center justify-center w-11 h-11 rounded-full transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-300 shrink-0"
               style={
                 isActive
                   ? { background: `${LH.primary}1A`, color: LH.primary, transform: "scale(1.05)", boxShadow: "0 12px 24px rgba(0,0,0,0.12)" }
