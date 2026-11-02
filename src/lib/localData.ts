@@ -203,6 +203,9 @@ export interface UserSettings {
   salary_cap_amount?: number;
   evening_shift_enabled?: boolean;
   evening_shift_hours?: number;
+  /** Evening shift pay: % of the hourly rate for every hour of an evening day (unset = plain rate), and one flat % for its overtime hours (unset = the normal overtime tiers). */
+  evening_shift_rate_percent?: number;
+  evening_shift_overtime_rate_percent?: number;
   overtime_calc_enabled?: boolean;
   /** Up to 5 tiers, applied in order (by hour number) to hours worked beyond the daily target. */
   overtime_tiers?: OvertimeTier[];
@@ -530,6 +533,8 @@ const safeParseUserData = (raw: string | null): LocalDataShape => {
         salary_cap_amount:
           typeof parsed.settings?.salary_cap_amount === "number" ? parsed.settings.salary_cap_amount : defaultSettings.salary_cap_amount,
         evening_shift_enabled: parsed.settings?.evening_shift_enabled ?? defaultSettings.evening_shift_enabled,
+        evening_shift_rate_percent: parsed.settings?.evening_shift_rate_percent,
+        evening_shift_overtime_rate_percent: parsed.settings?.evening_shift_overtime_rate_percent,
         evening_shift_hours:
           typeof parsed.settings?.evening_shift_hours === "number"
             ? parsed.settings.evening_shift_hours
@@ -1337,8 +1342,14 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
     // leftover fraction is paid at the regular rate instead of proportionally.
     const dayOvertime = useOvertime && settings.overtime_round_hours ? Math.floor(rawOvertime + 1e-9) : rawOvertime;
     const dayRegular = worked - dayOvertime;
-    const dayRegularPay = dayRegular * baseRate;
-    const dayOvertimePay = computeOvertimePay(dayOvertime, baseRate, settings.overtime_tiers);
+    // An evening shift can carry its own percentage on every hour and one flat percentage on its overtime.
+    const eveningOn = !!w.evening && !!settings.evening_shift_enabled;
+    const eveningRate = eveningOn && settings.evening_shift_rate_percent ? settings.evening_shift_rate_percent / 100 : 1;
+    const dayRegularPay = dayRegular * baseRate * eveningRate;
+    const dayOvertimePay =
+      eveningOn && settings.evening_shift_overtime_rate_percent
+        ? dayOvertime * baseRate * (settings.evening_shift_overtime_rate_percent / 100)
+        : computeOvertimePay(dayOvertime, baseRate, settings.overtime_tiers);
     // A finished day that fell short of its target (and wasn't covered by vacation/sick) is a shortfall.
     if ((w.end_time || w.date < todayKeyForShortfall) && w.deficitCoveredBy === undefined && target > worked) shortfallHours += target - worked;
 

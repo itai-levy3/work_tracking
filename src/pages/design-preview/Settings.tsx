@@ -154,6 +154,9 @@ export default function DesignPreviewSettings() {
 
   const [eveningDialogOpen, setEveningDialogOpen] = useState(false);
   const [eveningHoursInput, setEveningHoursInput] = useState("7");
+  const [eveningPayDialogOpen, setEveningPayDialogOpen] = useState(false);
+  const [eveningRateInput, setEveningRateInput] = useState("");
+  const [eveningOvertimeRateInput, setEveningOvertimeRateInput] = useState("");
 
   const [cholHamoedDialogOpen, setCholHamoedDialogOpen] = useState(false);
   const [cholHamoedModeDraft, setCholHamoedModeDraft] = useState<"three_quarters_work" | "half_work" | "fully_paid">("three_quarters_work");
@@ -490,6 +493,23 @@ export default function DesignPreviewSettings() {
     persist({ ...settings, evening_shift_hours: val });
     setEveningDialogOpen(false);
     toast.success("שעות משמרת ערב עודכנו");
+  };
+
+  const openEveningPayDialog = () => {
+    if (!settings) return;
+    setEveningRateInput(settings.evening_shift_rate_percent ? String(settings.evening_shift_rate_percent) : "");
+    setEveningOvertimeRateInput(settings.evening_shift_overtime_rate_percent ? String(settings.evening_shift_overtime_rate_percent) : "");
+    setEveningPayDialogOpen(true);
+  };
+  const saveEveningPay = () => {
+    if (!settings) return;
+    const num = (v: string) => {
+      const n = parseFloat(v.replace(/[^0-9.]/g, ""));
+      return Number.isNaN(n) || n <= 0 ? undefined : n;
+    };
+    persist({ ...settings, evening_shift_rate_percent: num(eveningRateInput), evening_shift_overtime_rate_percent: num(eveningOvertimeRateInput) });
+    setEveningPayDialogOpen(false);
+    toast.success("חישוב השכר למשמרת ערב עודכן");
   };
 
   const toggleEvening = (v: boolean) => {
@@ -840,6 +860,17 @@ export default function DesignPreviewSettings() {
               onChange={toggleEvening}
             />
             {settings.evening_shift_enabled && <Row title="שעות משמרת ערב" value={formatHM(settings.evening_shift_hours || 0)} onClick={openEveningDialog} />}
+            {settings.evening_shift_enabled && (
+              <Row
+                title="חישוב שכר למשמרת ערב"
+                value={
+                  settings.evening_shift_rate_percent || settings.evening_shift_overtime_rate_percent
+                    ? `${settings.evening_shift_rate_percent ?? 100}% לשעה · ${settings.evening_shift_overtime_rate_percent ? `${settings.evening_shift_overtime_rate_percent}% לשעות נוספות` : "שעות נוספות רגילות"}`
+                    : "שכר רגיל, בלי אחוזים מיוחדים"
+                }
+                onClick={openEveningPayDialog}
+              />
+            )}
             <ToggleRow
               title="חישוב שעות נוספות"
               value={settings.overtime_calc_enabled ? "פעיל: מעל שעות היעד היומיות" : "כבוי"}
@@ -1139,6 +1170,21 @@ export default function DesignPreviewSettings() {
           </DialogHeader>
           <input type="number" step="0.5" value={eveningHoursInput} onChange={(e) => setEveningHoursInput(e.target.value)} style={dialogFieldStyle} placeholder="7" />
           <button onClick={saveEveningHours} className="w-full h-11 rounded-xl font-bold text-white mt-2" style={{ background: LH.primary }}>שמירה</button>
+        </DialogContent>
+      </Dialog>
+
+      {/* Evening shift pay dialog */}
+      <Dialog open={eveningPayDialogOpen} onOpenChange={setEveningPayDialogOpen}>
+        <DialogContent className={dialogClassName} style={{ background: LH.background, fontFamily: "'Heebo', system-ui, sans-serif" }} dir="rtl">
+          <DialogHeader>
+            <DialogTitle style={{ color: LH.onSurface }}>חישוב שכר למשמרת ערב</DialogTitle>
+          </DialogHeader>
+          <label className="text-[12px] font-bold" style={{ color: LH.onSurfaceVariant }}>כמה אחוזים משלמים על כל שעה (מהשכר השעתי)</label>
+          <input type="number" step="1" value={eveningRateInput} onChange={(e) => setEveningRateInput(e.target.value)} style={dialogFieldStyle} placeholder="למשל 125" />
+          <label className="text-[12px] font-bold" style={{ color: LH.onSurfaceVariant }}>כמה אחוזים משלמים על שעות נוספות במשמרת ערב</label>
+          <input type="number" step="1" value={eveningOvertimeRateInput} onChange={(e) => setEveningOvertimeRateInput(e.target.value)} style={dialogFieldStyle} placeholder="למשל 150" />
+          <p className="text-[11px]" style={{ color: LH.onSurfaceVariant }}>שדה ריק = שכר רגיל. שעות נוספות ריקות = לפי מדרגות השעות הנוספות שלך.</p>
+          <button onClick={saveEveningPay} className="w-full h-11 rounded-xl font-bold text-white mt-2" style={{ background: LH.primary }}>שמירה</button>
         </DialogContent>
       </Dialog>
 
