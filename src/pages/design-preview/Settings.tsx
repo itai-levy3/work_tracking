@@ -154,6 +154,10 @@ export default function DesignPreviewSettings() {
 
   const [eveningDialogOpen, setEveningDialogOpen] = useState(false);
   const [eveningHoursInput, setEveningHoursInput] = useState("7");
+  const [nightDialogOpen, setNightDialogOpen] = useState(false);
+  const [nightHoursInput, setNightHoursInput] = useState("7");
+  const [nightRateInput, setNightRateInput] = useState("125");
+  const [nightOvertimeRateInput, setNightOvertimeRateInput] = useState("150");
 
   const [cholHamoedDialogOpen, setCholHamoedDialogOpen] = useState(false);
   const [cholHamoedModeDraft, setCholHamoedModeDraft] = useState<"three_quarters_work" | "half_work" | "fully_paid">("three_quarters_work");
@@ -490,6 +494,33 @@ export default function DesignPreviewSettings() {
     persist({ ...settings, evening_shift_hours: val });
     setEveningDialogOpen(false);
     toast.success("שעות משמרת ערב עודכנו");
+  };
+
+  const openNightDialog = () => {
+    if (!settings) return;
+    setNightHoursInput(String(settings.night_shift_hours ?? 7));
+    setNightRateInput(String(settings.night_shift_rate_percent ?? 125));
+    setNightOvertimeRateInput(String(settings.night_shift_overtime_rate_percent ?? 150));
+    setNightDialogOpen(true);
+  };
+  const saveNightShift = () => {
+    if (!settings) return;
+    const num = (v: string, fallback: number) => {
+      const n = parseFloat(v.replace(/[^0-9.]/g, ""));
+      return Number.isNaN(n) ? fallback : n;
+    };
+    persist({
+      ...settings,
+      night_shift_hours: num(nightHoursInput, 7),
+      night_shift_rate_percent: num(nightRateInput, 125),
+      night_shift_overtime_rate_percent: num(nightOvertimeRateInput, 150),
+    });
+    setNightDialogOpen(false);
+    toast.success("הגדרות משמרת לילה עודכנו");
+  };
+  const toggleNight = (v: boolean) => {
+    if (!settings) return;
+    persist({ ...settings, night_shift_enabled: v });
   };
 
   const toggleEvening = (v: boolean) => {
@@ -839,6 +870,13 @@ export default function DesignPreviewSettings() {
               on={!!settings.evening_shift_enabled}
               onChange={toggleEvening}
             />
+            <ToggleRow
+              title="משמרת לילה"
+              value={settings.night_shift_enabled ? `פעיל: ${settings.night_shift_rate_percent ?? 125}% לשעה, ${settings.night_shift_overtime_rate_percent ?? 150}% לשעות נוספות` : "כבוי"}
+              on={!!settings.night_shift_enabled}
+              onChange={toggleNight}
+            />
+            {settings.night_shift_enabled && <Row title="אחוזי תשלום ושעות משמרת לילה" value={`${formatHM(settings.night_shift_hours ?? 7)} שעות · ${settings.night_shift_rate_percent ?? 125}% · ${settings.night_shift_overtime_rate_percent ?? 150}%`} onClick={openNightDialog} />}
             {settings.evening_shift_enabled && <Row title="שעות משמרת ערב" value={formatHM(settings.evening_shift_hours || 0)} onClick={openEveningDialog} />}
             <ToggleRow
               title="חישוב שעות נוספות"
@@ -1139,6 +1177,22 @@ export default function DesignPreviewSettings() {
           </DialogHeader>
           <input type="number" step="0.5" value={eveningHoursInput} onChange={(e) => setEveningHoursInput(e.target.value)} style={dialogFieldStyle} placeholder="7" />
           <button onClick={saveEveningHours} className="w-full h-11 rounded-xl font-bold text-white mt-2" style={{ background: LH.primary }}>שמירה</button>
+        </DialogContent>
+      </Dialog>
+
+      {/* Night shift dialog */}
+      <Dialog open={nightDialogOpen} onOpenChange={setNightDialogOpen}>
+        <DialogContent className={dialogClassName} style={{ background: LH.background, fontFamily: "'Heebo', system-ui, sans-serif" }} dir="rtl">
+          <DialogHeader>
+            <DialogTitle style={{ color: LH.onSurface }}>משמרת לילה</DialogTitle>
+          </DialogHeader>
+          <label className="text-[12px] font-bold" style={{ color: LH.onSurfaceVariant }}>כמה שעות זו משמרת לילה</label>
+          <input type="number" step="0.5" value={nightHoursInput} onChange={(e) => setNightHoursInput(e.target.value)} style={dialogFieldStyle} placeholder="7" />
+          <label className="text-[12px] font-bold" style={{ color: LH.onSurfaceVariant }}>כמה אחוזים משלמים על כל שעה (מהשכר השעתי)</label>
+          <input type="number" step="1" value={nightRateInput} onChange={(e) => setNightRateInput(e.target.value)} style={dialogFieldStyle} placeholder="125" />
+          <label className="text-[12px] font-bold" style={{ color: LH.onSurfaceVariant }}>כמה אחוזים משלמים על שעות נוספות במשמרת לילה</label>
+          <input type="number" step="1" value={nightOvertimeRateInput} onChange={(e) => setNightOvertimeRateInput(e.target.value)} style={dialogFieldStyle} placeholder="150" />
+          <button onClick={saveNightShift} className="w-full h-11 rounded-xl font-bold text-white mt-2" style={{ background: LH.primary }}>שמירה</button>
         </DialogContent>
       </Dialog>
 

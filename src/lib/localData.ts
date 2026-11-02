@@ -78,6 +78,8 @@ export interface WorkHour {
   leaveHours?: number;
   /** Marks this specific "worked" day as an evening shift — its target comes from evening_shift_hours. */
   evening?: boolean;
+  /** Marks this specific "worked" day as a night shift: paid at night_shift_rate_percent, overtime at night_shift_overtime_rate_percent. */
+  night?: boolean;
   /** A free-text note/event left on this day (e.g. "יציאה מוקדמת ב-15:30"), settable in advance via Schedule. */
   note?: string;
   /**
@@ -203,6 +205,11 @@ export interface UserSettings {
   salary_cap_amount?: number;
   evening_shift_enabled?: boolean;
   evening_shift_hours?: number;
+  /** Night shift: every hour is paid at night_shift_rate_percent of the hourly rate, overtime hours at night_shift_overtime_rate_percent. */
+  night_shift_enabled?: boolean;
+  night_shift_hours?: number;
+  night_shift_rate_percent?: number;
+  night_shift_overtime_rate_percent?: number;
   overtime_calc_enabled?: boolean;
   /** Up to 5 tiers, applied in order (by hour number) to hours worked beyond the daily target. */
   overtime_tiers?: OvertimeTier[];
@@ -458,6 +465,10 @@ const defaultSettings: UserSettings = {
   salary_cap_amount: 0,
   evening_shift_enabled: false,
   evening_shift_hours: 7,
+  night_shift_enabled: false,
+  night_shift_hours: 7,
+  night_shift_rate_percent: 125,
+  night_shift_overtime_rate_percent: 150,
   overtime_calc_enabled: true,
   overtime_tiers: [
     { rateType: "percent", rateValue: 125 },
@@ -530,6 +541,10 @@ const safeParseUserData = (raw: string | null): LocalDataShape => {
         salary_cap_amount:
           typeof parsed.settings?.salary_cap_amount === "number" ? parsed.settings.salary_cap_amount : defaultSettings.salary_cap_amount,
         evening_shift_enabled: parsed.settings?.evening_shift_enabled ?? defaultSettings.evening_shift_enabled,
+        night_shift_enabled: parsed.settings?.night_shift_enabled ?? defaultSettings.night_shift_enabled,
+        night_shift_hours: parsed.settings?.night_shift_hours ?? defaultSettings.night_shift_hours,
+        night_shift_rate_percent: parsed.settings?.night_shift_rate_percent ?? defaultSettings.night_shift_rate_percent,
+        night_shift_overtime_rate_percent: parsed.settings?.night_shift_overtime_rate_percent ?? defaultSettings.night_shift_overtime_rate_percent,
         evening_shift_hours:
           typeof parsed.settings?.evening_shift_hours === "number"
             ? parsed.settings.evening_shift_hours
@@ -782,6 +797,9 @@ export const computeEffectiveHourlyRateForMonth = (year: number, month: number, 
 
 /** Like getDailyTargetHoursForDate, but returns the evening-shift target when that specific entry is marked evening. */
 export const getEffectiveDailyTarget = (dateStr: string, entry: WorkHour | undefined, settings: UserSettings): number => {
+  if (entry?.night && settings.night_shift_enabled) {
+    return settings.night_shift_hours ?? 7;
+  }
   if (entry?.evening && settings.evening_shift_enabled) {
     return settings.evening_shift_hours || 0;
   }
@@ -1337,8 +1355,10 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
     // leftover fraction is paid at the regular rate instead of proportionally.
     const dayOvertime = useOvertime && settings.overtime_round_hours ? Math.floor(rawOvertime + 1e-9) : rawOvertime;
     const dayRegular = worked - dayOvertime;
-    const dayRegularPay = dayRegular * baseRate;
-    const dayOvertimePay = computeOvertimePay(dayOvertime, baseRate, settings.overtime_tiers);
+    // A night shift is paid at its own percentage; its overtime at one flat night-overtime percentage.
+    const isNight = !!w.night && !!settings.night_shift_enabled;
+    const dayRegularPay = dayRegular * (isNight ? baseRate * ((settings.night_shift_rate_percent ?? 125) / 100) : baseRate);
+    const dayOvertimePay = isNight ? dayOvertime * baseRate * ((settings.night_shift_overtime_rate_percent ?? 150) / 100) : computeOvertimePay(dayOvertime, baseRate, settings.overtime_tiers);
     // A finished day that fell short of its target (and wasn't covered by vacation/sick) is a shortfall.
     if ((w.end_time || w.date < todayKeyForShortfall) && w.deficitCoveredBy === undefined && target > worked) shortfallHours += target - worked;
 

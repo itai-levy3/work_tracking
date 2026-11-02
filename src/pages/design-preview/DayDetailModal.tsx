@@ -528,6 +528,7 @@ export function DayDetailModal({ date, entry, settings: settingsProp, onClose, o
         fraction: undefined,
         paid: undefined,
         evening: draft.evening,
+        night: draft.night,
         deficitCoveredBy: undefined,
         remainderPaid: undefined,
         leaveHours: undefined,
@@ -547,6 +548,7 @@ export function DayDetailModal({ date, entry, settings: settingsProp, onClose, o
       fraction: draft.fraction,
       paid: draft.paid,
       evening: draft.evening,
+      night: draft.night,
       deficitCoveredBy: draft.deficitCoveredBy,
       note: draft.note?.trim() || undefined,
       dayParts: undefined,
@@ -974,6 +976,12 @@ export function DayDetailModal({ date, entry, settings: settingsProp, onClose, o
                     </span>
                   </div>
                 )}
+                {draft.night && settings.night_shift_enabled && (
+                  <div className="flex items-center gap-2 px-4 py-1.5 rounded-full" style={{ background: "rgba(16,26,70,0.07)" }}>
+                    <span className="material-symbols-outlined text-[14px]" style={{ color: "#101A46" }}>bedtime</span>
+                    <span className="text-[12px] font-bold" style={{ color: "#101A46" }}>משמרת לילה</span>
+                  </div>
+                )}
                 {draft.evening && (
                   <div className="flex items-center gap-2 px-4 py-1.5 rounded-full" style={{ background: "rgba(118,57,255,0.06)" }}>
                     <span className="material-symbols-outlined text-[14px]" style={{ color: "#7639FF" }}>dark_mode</span>
@@ -1367,7 +1375,16 @@ export function DayDetailModal({ date, entry, settings: settingsProp, onClose, o
                         <span className="material-symbols-outlined text-[16px]" style={{ color: "#7639FF" }}>dark_mode</span>
                         משמרת ערב
                       </span>
-                      <input type="checkbox" checked={!!draft.evening} onChange={(e) => setDraft((d) => ({ ...d, evening: e.target.checked }))} className="w-5 h-5 accent-[#7639FF]" />
+                      <input type="checkbox" checked={!!draft.evening} onChange={(e) => setDraft((d) => ({ ...d, evening: e.target.checked, night: e.target.checked ? false : d.night }))} className="w-5 h-5 accent-[#7639FF]" />
+                    </label>
+                  )}
+                  {(!draft.segments || draft.segments.length <= 1) && settings.night_shift_enabled && (
+                    <label className="flex items-center justify-between gap-2 p-3 rounded-xl" style={{ background: "rgba(16,26,70,0.05)" }}>
+                      <span className="text-[13px] font-medium flex items-center gap-1.5" style={{ color: "#101A46" }}>
+                        <span className="material-symbols-outlined text-[16px]" style={{ color: "#101A46" }}>bedtime</span>
+                        משמרת לילה
+                      </span>
+                      <input type="checkbox" checked={!!draft.night} onChange={(e) => setDraft((d) => ({ ...d, night: e.target.checked, evening: e.target.checked ? false : d.evening }))} className="w-5 h-5 accent-[#101A46]" />
                     </label>
                   )}
 
