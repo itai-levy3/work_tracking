@@ -1362,20 +1362,6 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
     perDay.push({ date: w.date, regularHours: dayRegular, overtimeHours: dayOvertime, regularPay: dayRegularPay, overtimePay: dayOvertimePay });
   }
 
-  // A scheduled work day that has already passed with no record at all earned nothing: its whole target is missing.
-  // Today (and anything later) is never judged until it is over.
-  {
-    const recorded = new Set(entries.map((e) => e.date));
-    const daysInThisMonth = new Date(year, month + 1, 0).getDate();
-    for (let day = 1; day <= daysInThisMonth; day++) {
-      const ds = localDateKey(year, month, day);
-      if (ds >= todayKeyForShortfall) break;
-      if (settings.employment_start_date && ds < settings.employment_start_date) continue;
-      if (recorded.has(ds)) continue;
-      shortfallHours += getDailyTargetHoursForDate(ds, settings);
-    }
-  }
-
   return { regularHours, overtimeHours, regularPay, overtimePay, overtimeBasePay, shortfallHours, shortfallPay: shortfallHours * baseRate, daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay };
 };
 

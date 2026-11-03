@@ -8,7 +8,6 @@ import {
   computeCumulativeLeaveUsage,
   computeEffectiveHourlyRateForMonth,
   computeMonthlyPayroll,
-  computeShortfallCarry,
   computeVacationMinimumStatus,
   DayPart,
   DayStatus,
@@ -254,14 +253,7 @@ export default function DesignPreview() {
   // The pace circle itself shows the NET of the two — how many minutes you're ahead or behind
   // overall, in one number — not the raw deficit alone. Green/ahead when overtime outweighs
   // shortfall, red/behind when shortfall outweighs overtime.
-  // With month-behind shortfalls on, last month's missing hours and unpaid days are what this month's
-  // payslip pays for, so they weigh on this month's pace too.
-  const carriedShortfall = useMemo(() => {
-    if (!settings || settings.shortfall_payout_month !== "next") return 0;
-    const c = computeShortfallCarry(currentMonth.getFullYear(), currentMonth.getMonth(), settings);
-    return c.shortfallHours + c.vacation.deductedHours + c.sick.deductedHours;
-  }, [settings, currentMonth, workHours]);
-  const netPaceHours = monthOvertime - monthRemaining - carriedShortfall;
+  const netPaceHours = monthOvertime - monthRemaining;
   const monthPacePercent = dailyPace.targetSum > 0 ? Math.min(100, (dailyPace.workedSum / dailyPace.targetSum) * 100) : dailyPace.workedSum > 0 ? 100 : 0;
 
   // Visible proof that deferred-overtime hours are actually being tracked while they accrue,
@@ -841,7 +833,7 @@ export default function DesignPreview() {
                 {
                   icon: "hourglass_bottom",
                   label: netPaceHours < 0 ? "בחוסר החודש" : "בעודף החודש",
-                  sub: carriedShortfall > 0.01 ? "כולל חוסר מהחודש הקודם" : "לעומת הקצב הצפוי",
+                  sub: "לעומת הקצב הצפוי",
                   value: netPaceHours < 0 ? formatHM(-netPaceHours) : `+${formatHM(netPaceHours)}`,
                   // One net number, not the raw deficit alone — red only when the net across the
                   // whole month is actually negative (shortfall days outweigh overtime days).

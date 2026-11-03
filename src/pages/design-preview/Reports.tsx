@@ -194,9 +194,9 @@ export default function DesignPreviewReports() {
   const mandatoryShown = overrides?.__mandatory ?? mandatoryComputed;
   const providentShown = overrides?.__provident ?? providentComputed;
   const grossSystem = grossOf(payroll);
-  // Overtime is shown as its premium only ("התוספת"): the overtime hours themselves are paid at the plain
-  // rate and sit with the regular hours, so half an hour of overtime adds just the extra on that half hour.
-  const overtimePremium = payroll.overtimePay - payroll.overtimeBasePay;
+  // Overtime is the full pay of the overtime hours (their plain-rate value plus the premium) and lands in the
+  // month it is paid; the regular-hours row never includes those hours.
+  const overtimePremium = payroll.overtimePay;
   const baseGrossSystem = grossSystem - overtimePremium;
   const baseGrossShown = overrides?.__gross ?? baseGrossSystem;
   const overtimeShown = overrides?.__overtime ?? overtimePremium;
@@ -219,9 +219,9 @@ export default function DesignPreviewReports() {
   // Gross composition — follows the month day by day (accrued to date), full month once it's final.
   const breakdownSource = isCurrentMonth ? toDate : payroll;
   const breakdown: { label: string; amount: number; color: string }[] = [
-    { label: "שעות רגילות", amount: breakdownSource.regularPay + breakdownSource.overtimeBasePay + totalDeducted, color: "#7639FF" },
+    { label: "שעות רגילות", amount: breakdownSource.regularPay + totalDeducted, color: "#7639FF" },
     ...(totalDeducted > 0.5 ? [{ label: shortfallNext ? "הורדות מהחודש הקודם" : "קיזוז ימים ללא תשלום", amount: -totalDeducted, color: "#DC2626" }] : []),
-    { label: payoutNext ? "תוספת שעות נוספות מחודש קודם" : "תוספת שעות נוספות", amount: breakdownSource.overtimePay - breakdownSource.overtimeBasePay, color: "#00A8CC" },
+    { label: payoutNext ? "שעות נוספות מחודש קודם" : "שעות נוספות", amount: breakdownSource.overtimePay, color: "#00A8CC" },
     ...(breakdownSource.fixedComponentsTotal > 0.5 ? [{ label: "תוספות קבועות", amount: breakdownSource.fixedComponentsTotal, color: "#0F766E" }] : []),
     ...(breakdownSource.foodAllowanceAddition > 0.5 ? [{ label: "תקציב אוכל", amount: breakdownSource.foodAllowanceAddition, color: "#F59E0B" }] : []),
     ...(isFinal && Math.abs(manualAdjust) > 0.5 ? [{ label: "תיקון ידני", amount: manualAdjust, color: "#8892b0" }] : []),
@@ -454,7 +454,7 @@ export default function DesignPreviewReports() {
                       </span>
                       {[
                         { label: "ברוטו (ללא שעות נוספות)", value: edGross, set: setEdGross },
-                        { label: "תוספת שעות נוספות (₪)", value: edOvertime, set: setEdOvertime },
+                        { label: "שעות נוספות (₪)", value: edOvertime, set: setEdOvertime },
                         { label: "ניכויי חובה (סה״כ)", value: edMandatory, set: setEdMandatory },
                         { label: "קופות גמל ופנסיה (סה״כ)", value: edProvident, set: setEdProvident },
                         { label: "נטו בפועל (לא חובה)", value: edNet, set: setEdNet },
@@ -596,8 +596,8 @@ export default function DesignPreviewReports() {
                 icon: "more_time",
                 title: payoutNext ? "נצברו החודש" : "שעות נוספות החודש",
                 hours: payroll.ownOvertimeHours,
-                pay: payoutNext ? payroll.ownOvertimePay : payroll.ownOvertimePay - payroll.ownOvertimeBasePay,
-                note: payoutNext ? "ישולמו בחודש הבא, כולל השכר הרגיל על השעות" : "התוספת בלבד, כלולה בברוטו של החודש",
+                pay: payroll.ownOvertimePay,
+                note: payoutNext ? "ישולמו בחודש הבא" : "כלולות בברוטו של החודש",
                 accent: "#6D5BD0",
                 tint: "#F3F1FC",
                 line: "#DDD8F4",
@@ -678,7 +678,7 @@ export default function DesignPreviewReports() {
               {[
                 { label: "ברוטו", sub: "שכר מלא לפי הלוח, תוספות ותקציב אוכל", amount: baseGrossShown + totalDeducted, sign: "+", color: LH.onSurface },
                 ...(totalDeducted > 0.5 ? [{ label: shortfallNext ? "הורדות מהחודש הקודם" : "קיזוז ימים ללא תשלום", sub: shortfallNext ? "חוסר שעות וימים ללא תשלום, בניכוי מה שנצבר" : "חופש/מחלה שלא כוסו מהיתרה", amount: totalDeducted, sign: "−", color: "#DC2626" }] : []),
-                { label: "תוספת שעות נוספות", sub: payoutNext ? "מהחודש הקודם" : "מהחודש הזה", amount: overtimeShown, sign: "+", color: "#00A8CC" },
+                { label: "שעות נוספות", sub: payoutNext ? "מהחודש הקודם" : "מהחודש הזה", amount: overtimeShown, sign: "+", color: "#00A8CC" },
                 { label: "ניכויי חובה", sub: mandatoryParts || "—", amount: mandatoryShown, sign: "−", color: "#DC2626" },
                 { label: "קופות גמל ופנסיה", sub: providentParts || "לא מוגדר", amount: providentShown, sign: "−", color: "#DC2626" },
                 ...(otherDeductions > 0.5 ? [{ label: "ניכויים נוספים", sub: "לפי ההגדרות שלך", amount: otherDeductions, sign: "−", color: "#DC2626" }] : []),
