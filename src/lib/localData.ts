@@ -1362,6 +1362,20 @@ const computeRawMonthPay = (year: number, month: number, settings: UserSettings,
     perDay.push({ date: w.date, regularHours: dayRegular, overtimeHours: dayOvertime, regularPay: dayRegularPay, overtimePay: dayOvertimePay });
   }
 
+  // A scheduled work day that has already passed with no record at all earned nothing: its whole target is missing.
+  // Today (and anything later) is never judged until it is over.
+  {
+    const recorded = new Set(entries.map((e) => e.date));
+    const daysInThisMonth = new Date(year, month + 1, 0).getDate();
+    for (let day = 1; day <= daysInThisMonth; day++) {
+      const ds = localDateKey(year, month, day);
+      if (ds >= todayKeyForShortfall) break;
+      if (settings.employment_start_date && ds < settings.employment_start_date) continue;
+      if (recorded.has(ds)) continue;
+      shortfallHours += getDailyTargetHoursForDate(ds, settings);
+    }
+  }
+
   return { regularHours, overtimeHours, regularPay, overtimePay, overtimeBasePay, shortfallHours, shortfallPay: shortfallHours * baseRate, daysWorked, unpaidLeaveDays, unpaidOffDays, holidayDays, perDay };
 };
 
@@ -1373,6 +1387,8 @@ export interface LeaveCarry {
   coveredDays: number;
   /** Days that actually come off the next payslip. */
   deductedDays: number;
+  /** The same, in hours. */
+  deductedHours: number;
   /** ₪ the unpaid days would have cost in their own month. */
   unpaidAmount: number;
   /** ₪ that actually comes off the next payslip. */
@@ -1388,7 +1404,7 @@ export interface ShortfallCarry {
   leaveDeductedTotal: number;
 }
 
-const EMPTY_LEAVE_CARRY: LeaveCarry = { unpaidDays: 0, coveredDays: 0, deductedDays: 0, unpaidAmount: 0, deductedAmount: 0 };
+const EMPTY_LEAVE_CARRY: LeaveCarry = { unpaidDays: 0, coveredDays: 0, deductedDays: 0, deductedHours: 0, unpaidAmount: 0, deductedAmount: 0 };
 const EMPTY_SHORTFALL_CARRY: ShortfallCarry = { shortfallHours: 0, shortfallPay: 0, vacation: EMPTY_LEAVE_CARRY, sick: EMPTY_LEAVE_CARRY, leaveDeductedTotal: 0 };
 
 /** Days of this leave type that accrue in one calendar month (0 for a lump-sum accrual: nothing new arrives in between). */
@@ -1406,7 +1422,8 @@ const leaveCarryOfMonth = (year: number, month: number, type: "vacation" | "sick
   const unpaidAmount = items.reduce((sum, d) => sum + d.amount, 0);
   const deductedDays = Math.max(0, unpaidDays - monthlyAccrualDays(type, settings));
   const ratio = unpaidDays > 0 ? deductedDays / unpaidDays : 0;
-  return { unpaidDays, coveredDays: unpaidDays - deductedDays, deductedDays, unpaidAmount, deductedAmount: unpaidAmount * ratio };
+  const unpaidHours = items.reduce((sum, d) => sum + d.unpaidHours, 0);
+  return { unpaidDays, coveredDays: unpaidDays - deductedDays, deductedDays, deductedHours: unpaidHours * ratio, unpaidAmount, deductedAmount: unpaidAmount * ratio };
 };
 
 /** What lands on (year, month)'s payslip from the previous month. All zeros unless shortfall_payout_month is "next". */

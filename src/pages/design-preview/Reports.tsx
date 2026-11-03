@@ -171,6 +171,14 @@ export default function DesignPreviewReports() {
   const vacationTotal = shortfallNext ? carry.vacation.deductedAmount : vacationDeductions.reduce((s, d) => s + d.amount, 0);
   const sickTotal = shortfallNext ? carry.sick.deductedAmount : sickDeductions.reduce((s, d) => s + d.amount, 0);
   const shortfallCut = shortfallNext ? carry.shortfallPay : 0;
+  // The days the accrual covers are the earliest ones of each type; they stay in the list, struck through at ₪0.
+  const coverLeft = { vacation: shortfallNext ? carry.vacation.coveredDays : 0, sick: shortfallNext ? carry.sick.coveredDays : 0 };
+  const leaveRows = leaveItems.map((d) => {
+    const covered = Math.min(d.unpaidDays, coverLeft[d.type]);
+    coverLeft[d.type] -= covered;
+    const charged = d.unpaidDays > 0 ? d.amount * (1 - covered / d.unpaidDays) : d.amount;
+    return { ...d, covered, charged, fullyCovered: covered >= d.unpaidDays - 0.001 };
+  });
   const totalDeducted = vacationTotal + sickTotal + shortfallCut;
   // What this month's own shortfall will take off next month's payslip (a forecast while the month is running).
   const nextCarry = shortfallNext ? computeShortfallCarry(nextMonthDate.getFullYear(), nextMonthDate.getMonth(), settings) : null;
@@ -588,8 +596,8 @@ export default function DesignPreviewReports() {
                 icon: "more_time",
                 title: payoutNext ? "נצברו החודש" : "שעות נוספות החודש",
                 hours: payroll.ownOvertimeHours,
-                pay: payroll.ownOvertimePay - payroll.ownOvertimeBasePay,
-                note: payoutNext ? "ישולמו בחודש הבא" : "כלולות בברוטו של החודש",
+                pay: payoutNext ? payroll.ownOvertimePay : payroll.ownOvertimePay - payroll.ownOvertimeBasePay,
+                note: payoutNext ? "ישולמו בחודש הבא, כולל השכר הרגיל על השעות" : "התוספת בלבד, כלולה בברוטו של החודש",
                 accent: "#6D5BD0",
                 tint: "#F3F1FC",
                 line: "#DDD8F4",
@@ -751,9 +759,9 @@ export default function DesignPreviewReports() {
               </div>
 
               <div className="flex flex-col relative z-10">
-                {leaveItems.map((d, i) => {
+                {leaveRows.map((d, i) => {
                   const color = d.type === "vacation" ? "#60A5FA" : "#FBBF24";
-                  const isLast = i === leaveItems.length - 1;
+                  const isLast = i === leaveRows.length - 1;
                   return (
                     <div key={`${d.date}-${d.type}`} className="flex gap-3">
                       <div className="flex flex-col items-center pt-1.5 shrink-0">
@@ -766,10 +774,13 @@ export default function DesignPreviewReports() {
                             {new Date(`${d.date}T00:00:00`).toLocaleDateString("he-IL", { day: "numeric", month: "long" })}
                           </span>
                           <span className="text-[11px]" style={{ color: "rgba(255,255,255,0.5)" }}>
-                            {formatHM(d.unpaidHours)} לא משולמות · {d.unpaidDays.toFixed(2)} מיום
+                            {d.covered > 0.001 ? (d.fullyCovered ? "כוסה מהצבירה" : `${d.covered.toFixed(2)} מיום כוסה מהצבירה`) : `${formatHM(d.unpaidHours)} לא משולמות · ${d.unpaidDays.toFixed(2)} מיום`}
                           </span>
                         </div>
-                        <span dir="ltr" className="tabular-nums text-[14px] font-bold shrink-0" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color }}>−{money(d.amount)}</span>
+                        <span dir="ltr" className="tabular-nums text-[14px] font-bold shrink-0" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", color }}>
+                          {d.covered > 0.001 && <span className="me-2 font-semibold" style={{ textDecoration: "line-through", opacity: 0.45 }}>−{money(d.amount)}</span>}
+                          −{money(d.charged)}
+                        </span>
                       </div>
                     </div>
                   );

@@ -8,6 +8,7 @@ import {
   computeCumulativeLeaveUsage,
   computeEffectiveHourlyRateForMonth,
   computeMonthlyPayroll,
+  computeShortfallCarry,
   computeVacationMinimumStatus,
   DayPart,
   DayStatus,
@@ -226,6 +227,8 @@ export default function DesignPreview() {
       if (status && status !== "worked" && status !== "holiday") continue;
       const isToday = isCurrentRealMonth && d === realToday.getDate();
       if (isToday && isClockedIn) continue;
+      // Today is not missing anything until it is over: no record yet, or a shift still open, is not a deficit.
+      if (isToday && (!entryForDay || !isFinishedDay(entryForDay, todayStr))) continue;
       const target = getEffectiveDailyTarget(ds, entryForDay, settings);
       if (status === "holiday") {
         const credited = target * fractionMultiplier(entryForDay?.fraction);
@@ -251,7 +254,14 @@ export default function DesignPreview() {
   // The pace circle itself shows the NET of the two — how many minutes you're ahead or behind
   // overall, in one number — not the raw deficit alone. Green/ahead when overtime outweighs
   // shortfall, red/behind when shortfall outweighs overtime.
-  const netPaceHours = monthOvertime - monthRemaining;
+  // With month-behind shortfalls on, last month's missing hours and unpaid days are what this month's
+  // payslip pays for, so they weigh on this month's pace too.
+  const carriedShortfall = useMemo(() => {
+    if (!settings || settings.shortfall_payout_month !== "next") return 0;
+    const c = computeShortfallCarry(currentMonth.getFullYear(), currentMonth.getMonth(), settings);
+    return c.shortfallHours + c.vacation.deductedHours + c.sick.deductedHours;
+  }, [settings, currentMonth, workHours]);
+  const netPaceHours = monthOvertime - monthRemaining - carriedShortfall;
   const monthPacePercent = dailyPace.targetSum > 0 ? Math.min(100, (dailyPace.workedSum / dailyPace.targetSum) * 100) : dailyPace.workedSum > 0 ? 100 : 0;
 
   // Visible proof that deferred-overtime hours are actually being tracked while they accrue,
@@ -831,7 +841,7 @@ export default function DesignPreview() {
                 {
                   icon: "hourglass_bottom",
                   label: netPaceHours < 0 ? "בחוסר החודש" : "בעודף החודש",
-                  sub: "לעומת הקצב הצפוי",
+                  sub: carriedShortfall > 0.01 ? "כולל חוסר מהחודש הקודם" : "לעומת הקצב הצפוי",
                   value: netPaceHours < 0 ? formatHM(-netPaceHours) : `+${formatHM(netPaceHours)}`,
                   // One net number, not the raw deficit alone — red only when the net across the
                   // whole month is actually negative (shortfall days outweigh overtime days).
